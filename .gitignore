@@ -1,0 +1,21 @@
+# Build output.  The exe belongs on a GitHub Release, never in git: a 15 MB
+# binary inflates the clone for everyone, and every future build inflates it
+# again.  Releases are what that is for.
+dist/
+build/
+Raze.spec
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+
+# Editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
