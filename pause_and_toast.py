@@ -18,6 +18,8 @@ import customtkinter as ctk
 import AutoTyper as A
 
 A.reduce_motion_enabled = lambda: True
+# a test must never put anything on the user's Discord profile
+A.rpcmod.enabled = False
 
 failures = []
 typed = []          # what the worker believes it sent

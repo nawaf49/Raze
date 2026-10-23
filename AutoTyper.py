@@ -30,6 +30,7 @@ from PIL import Image
 import pyperclip
 
 import hotkeys as hotkeymod
+import rpc as rpcmod
 
 
 # --------------------------------------------------------------------------- #
@@ -1107,6 +1108,9 @@ class AutoTyper:
         # on the Tk thread - the only thing that crosses between the two
         self._pause_requested = False
         self._resume_requested = False
+        # the status the presence thread works from, written on the Tk thread
+        # by _set_status and read by the heartbeat
+        self._rpc_status = "IDLE"
         self._history_dirty = False
         self._last_save = 0.0
         self._generation = 0
@@ -1132,6 +1136,10 @@ class AutoTyper:
 
         self._apply_config()
         self._register_hotkey()
+        # Discord presence: its own thread, exactly like the hotkey listener,
+        # and as silent as the toast when Discord is not running
+        self.presence = rpcmod.Presence()
+        self.presence.start()
         self._center_window()
         self._play_intro()
         self.root.after(150, self._tick)
@@ -1358,6 +1366,7 @@ class AutoTyper:
                    dy=INTRO_DROP)
 
     def _set_status(self, text, color):
+        self._rpc_status = text
         self.status_text.set_text(text)
         self.status_text.set_color(color)
         self.status_dot.set_color(color)
@@ -2816,6 +2825,16 @@ class AutoTyper:
         mins, secs = divmod(int(self.stats["elapsed"]), 60)
         self.tile_time.set(f"{mins:02d}:{secs:02d}")
 
+        # Hand the presence thread its four values.  It decides on its own
+        # whether anything is worth pushing to Discord, so this stays cheap
+        # enough to run on every heartbeat tick.
+        try:
+            self.presence.set_state(self._rpc_status, self.stats["sent"],
+                                    sum(self.daily.values()),
+                                    self.stats["elapsed"])
+        except Exception:
+            pass
+
         nxt = 0.0
         if self._next_deadline and self.typing:
             nxt = max(0.0, self._next_deadline - time.monotonic())
@@ -2868,6 +2887,12 @@ class AutoTyper:
         # a notification still on screen would otherwise outlive the app
         try:
             notify_clear(getattr(self, "_raze_hwnd", 0))
+        except Exception:
+            pass
+        # and so would a presence: the profile must not go on showing a
+        # session that has ended
+        try:
+            self.presence.stop()
         except Exception:
             pass
         try:
