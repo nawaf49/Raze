@@ -75,7 +75,7 @@ These are not preferences. Breaking one silently ruins the product.
 | `layout_check.py` | 19 checks: the four keycaps and the hotkeys card, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `rpc.py` | Discord presence: named pipe over ctypes, its own thread |
-| `rpc_check.py` | 45 checks: the presence protocol against a fake local pipe |
+| `rpc_check.py` | 47 checks: the presence protocol against a fake local pipe |
 | `build_assets.py` | Regenerates `assets/` artwork from source |
 | `make_shortcut.py` | Start Menu + Desktop shortcut "Raze" |
 | `AGENTS.md` | This file — read it first |
@@ -232,6 +232,11 @@ payload that is unpacked from scratch on every launch.
 - The state line counts the **session** while one is live — it matches the
   session card — and falls back to the **lifetime total** from `daily` when
   there is not.
+- The activity carries one **button** — `Download` → the public repo, never the
+  source one. That is the real point of a presence: a stranger sees the
+  activity and has somewhere to go. `REPO_URL` and `BUTTON_LABEL` are the two
+  constants. Discord does not always draw the button for the account that set
+  it, so check with an alt or a friend before calling it broken.
 - `_on_close` stops it, and `stop()` clears the activity before the thread
   leaves, so the profile does not keep showing a session that ended.
 - `CLIENT_ID` lives in `rpc.py`. Every call is inside `try/except`: a pipe
@@ -286,11 +291,11 @@ being verified.
   - `layout_check.py` — 19 checks. The four keycaps read `F8`/`F6`/`F7`/`F9`
     and fit their frames, the hotkeys card still fits its tab at 348 px, and it
     captures `typer.png` / `hotkeys.png` for the eye to check.
-  - `rpc_check.py` — 45 checks. The presence protocol end to end: handshake,
-    all three activity shapes, ping/pong, the push throttle, the clear-down on
-    exit, byte- and message-mode pipes, and the disabled seam. It swaps
-    `rpc._PIPES` for a pipe it creates itself, so **Discord's real pipe is
-    never opened** even while Discord is running.
+  - `rpc_check.py` — 47 checks. The presence protocol end to end: handshake,
+    all three activity shapes, the repo button, ping/pong, the push throttle,
+    the clear-down on exit, byte- and message-mode pipes, and the disabled
+    seam. It swaps `rpc._PIPES` for a pipe it creates itself, so **Discord's
+    real pipe is never opened** even while Discord is running.
   - `capture_window.py` — the PrintWindow helper `layout_check.py` uses.
   Run them with `python <file>` from the project root; each prints
   `RESULT: PASS` and exits 0.

@@ -214,6 +214,11 @@ def run_exchange(label, message_mode):
             check("%s: the timer starts one session-elapsed ago" % label,
                   isinstance(start, int)
                   and abs(start - int(time.time() - 12.5)) <= 3, start)
+            buttons = a.get("buttons") or []
+            check("%s: the activity carries the repo button" % label,
+                  len(buttons) == 1
+                  and buttons[0].get("label") == rpc.BUTTON_LABEL
+                  and buttons[0].get("url") == rpc.REPO_URL, buttons)
 
         # paused: same count, no timer (a frozen clock would drift)
         presence.set_state("PAUSED", 42, 0, 12.5)

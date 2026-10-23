@@ -26,6 +26,11 @@ from ctypes import wintypes
 
 CLIENT_ID = "1563320594743693483"
 
+# The one thing a presence is really for: a stranger sees the activity and
+# has somewhere to go.  The public repo, never the source one.
+REPO_URL = "https://github.com/nawaf49/Raze"
+BUTTON_LABEL = "Download"
+
 # Harnesses turn this off before they build a real AutoTyper, for the same
 # reason they stub the toast: a test must never put anything on the user's
 # Discord profile.  See AGENTS.md, Testing protocol.
@@ -206,7 +211,8 @@ class Presence:
             state = "%d message%s all time" % (lifetime,
                                                "" if lifetime == 1 else "s")
 
-        activity = {"details": details, "state": state, "instance": False}
+        activity = {"details": details, "state": state, "instance": False,
+                    "buttons": [{"label": BUTTON_LABEL, "url": REPO_URL}]}
 
         # Discord draws the timer itself from `start`, so it only needs
         # handing over while the clock is actually running.  A frozen elapsed
