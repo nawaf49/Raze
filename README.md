@@ -12,10 +12,9 @@ them for you into whatever app you are working in.
 - **Loop** - how many times to repeat the pool. `0` is infinite, `1` is a single pass.
 - **Random** - pick the next message at random instead of walking the list.
 - **Four hotkeys** - `F8` start, `F6` pause, `F7` resume, `F9` stop by default,
-  all four changeable on the Hotkeys tab. Single keys (`F8`, `F6`, `F12` ...) or
-  combinations (`ctrl+shift+f8`). They are not aliases of each other: pause
-  freezes the clock and keeps your session counters, and only resume picks it
-  back up; stop ends the session and the next start begins a new one.
+  all four changeable on the Hotkeys tab. They are not aliases of each other:
+  pause freezes the clock and keeps your session counters, only resume picks it
+  back up, and stop ends the session so the next start begins a new one.
 - **History** - how many messages went out on every day, grouped by date.
   It is permanent: it stays until the app data is deleted.
 - **Discord presence** - while Raze runs, your Discord profile shows whether it

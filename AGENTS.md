@@ -342,17 +342,17 @@ open — the single-instance check reports honestly in both states.
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
 - **Exactly one release exists at a time.** When the next one ships, delete the
-  old: `gh release delete v1.3 --repo nawaf49/Raze --yes`. The user's rule — a
+  old: `gh release delete v1.4 --repo nawaf49/Raze --yes`. The user's rule — a
   visitor sees one clear download, never a menu of old versions. The private
-  repo's git log is the only remaining record of what v1.0–v1.2 contained.
-  **Current: v1.3.**
+  repo's git log is the only remaining record of what v1.0–v1.3 contained.
+  **Current: v1.4.**
 - Create it as a real release, not a draft; it becomes *Latest* on its own:
-  `gh release create v1.4 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
+  `gh release create v1.5 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
 - **Verify before publishing.** `Get-FileHash .\dist\Raze.exe -Algorithm SHA256`
   must equal the digest GitHub reports for the uploaded asset; the SHA256 that
   goes in the notes comes from that match, never from a build nobody re-checked.
-  (v1.3: `195B26143C1316AC57628EBB18B70F2C2F8966D7A3CAF32498DEB65388E8AADF`
-  over 16,065,394 bytes, both sides confirmed identical.)
+  (v1.4: `646303BFED1B0CA00E1340532F8CA92BF5BCC02DFDC937ED12D414385BAE79F0`
+  over 16,102,579 bytes, both sides confirmed identical.)
 - **The notes format never changes** — same shape, same order, every time:
 
 ```text
@@ -378,7 +378,7 @@ and stops if you tab back in.
 ```
 
   Read the published one back with
-  `gh release view v1.3 --repo nawaf49/Raze --json body --jq .body`.
+  `gh release view v1.4 --repo nawaf49/Raze --json body --jq .body`.
 
 ## The public README
 
@@ -392,6 +392,12 @@ decisions — do not re-open one without asking:
   names its own subject — "Choose how many seconds pass between messages, and
   how many times **Raze** goes through the list" — rather than hanging off an
   implied one. All features stay listed; they just get short.
+- **No key combinations.** The user's word: "there are no key combinations".
+  Both READMEs and the release notes say only that the four keys are
+  changeable, never that a change can be a combination. The parser in
+  `hotkeys.py` does still accept `ctrl+shift+f8`, and the Hotkeys dialog's own
+  error text still offers it as an example — a cosmetic leftover that would
+  need a rebuild to remove. Do not re-advertise combinations anywhere.
 - **The title line is measured, not eyeballed:**
   `<h1 align="center"><img src="app_icon.png" width="43" align="top" alt=""> Raze</h1>`
   - `align="middle"` is wrong on GitHub: Blink maps it to
