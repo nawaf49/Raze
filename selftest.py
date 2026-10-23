@@ -462,6 +462,27 @@ def run():
                                not any(f.lower().endswith(".json")
                                        for f in os.listdir(project)))
 
+        # a profile an older build left behind as "raze" has to come out as
+        # Raze - Windows is case insensitive, so otherwise it stays wrong for
+        # as long as that folder exists, on every machine that started wrong
+        with tempfile.TemporaryDirectory() as legacy_root:
+            legacy = os.path.join(legacy_root, "raze")
+            os.makedirs(legacy)
+            with open(os.path.join(legacy, "config.json"), "w",
+                      encoding="utf-8") as f:
+                f.write('{"messages": ["kept"]}')
+            os.environ["APPDATA"] = legacy_root
+            A.config_path()
+            named = [d for d in os.listdir(legacy_root)
+                     if d.lower() == "raze"]
+            failures += not _check("a lowercase profile folder is corrected",
+                                   named == ["Raze"], str(named))
+            failures += not _check("the correction keeps the config",
+                                   os.path.exists(os.path.join(
+                                       legacy_root, "Raze", "config.json")),
+                                   str(os.listdir(os.path.join(
+                                       legacy_root, "Raze"))))
+
     print()
     if failures:
         print(f"SELFTEST FAILED - {failures} check(s) did not pass")

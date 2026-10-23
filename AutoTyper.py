@@ -227,9 +227,36 @@ def pretty_day(day):
         return day
 
 
+def _ensure_folder_name(folder: str) -> None:
+    """Put the profile folder's name right, if it happens to be wrong.
+
+    Windows compares paths without regard to case, so a folder an older build
+    created as ``raze`` is accepted forever: ``os.makedirs(..., exist_ok=True)``
+    finds it and returns, spelling and all, and the profile shows ``raze`` on
+    every machine that ever started out that way.  Renaming the folder itself is
+    safe because every path the rest of the code holds is case insensitive - they
+    all keep resolving to the same place, now with the product's name on the
+    front of it.  A rename that fails because something has the config open just
+    waits for the next call.
+    """
+    parent, want = os.path.split(folder)
+    try:
+        entries = os.listdir(parent)
+    except OSError:
+        return
+    for entry in entries:
+        if entry != want and entry.lower() == want.lower():
+            try:
+                os.rename(os.path.join(parent, entry), os.path.join(parent, want))
+            except OSError:
+                pass
+            return
+
+
 def config_path() -> str:
     folder = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Raze")
     os.makedirs(folder, exist_ok=True)
+    _ensure_folder_name(folder)
     return os.path.join(folder, "config.json")
 
 
