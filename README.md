@@ -37,20 +37,19 @@ one at a time, pressing Enter after each one.
 - Choose how many seconds pass between messages, and how many times Raze
   goes through the list. `0` means keep going until you stop it.
 - Turn on random order to send them shuffled instead of top to bottom.
-- Change the keys to whatever suits you — one key, or a combination like
-  `ctrl+shift+f8`.
+- Each of the four keys can be changed on the Hotkeys tab.
 - Pause keeps your counters and stops the clock. `F7` picks up where you
-  left off. Stop ends the session, and the next start begins fresh.
+  left off, and `F9` ends the session.
 - Raze never types into itself. If it's the window in front it won't start,
   and it stops if you click back into it.
 - The History tab shows how many messages you sent each day, plus a total
   for all time.
-
-## Notifications
-
-If Raze stops without you asking — the list ran out, typing failed, or you
-clicked back into Raze — you get a Windows notification. Stop it yourself with
-`F9` and you won't get one.
+- Your Discord profile shows Raze at work while it runs — whether it's typing
+  or paused, how long it has typed overall, a count of every message ever
+  sent, and a **Get Raze** button that brings people back here.
+- If Raze stops without you asking — the list ran out, typing failed, or you
+  clicked back into Raze — you get a Windows notification. Not when you stop
+  it yourself.
 
 ## Your data
 
