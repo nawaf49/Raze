@@ -192,7 +192,6 @@ def run():
             self._raze_hwnd = 0
             self._tab_in_stop = False
             self._worker_error = None
-            self._token_n = 0
             self.paused = False
             self.typed = []
             self._limit = limit
@@ -313,43 +312,18 @@ def run():
                            tabbed._tab_in_stop and tabbed._worker_done,
                            str((tabbed._tab_in_stop, tabbed._worker_done)))
 
-    print("message tokens")
-
-    failures += not _check("an entry with no token is left alone",
-                           A.expand_tokens("hello there", 1, 1) == "hello there",
-                           A.expand_tokens("hello there", 1, 1))
-    failures += not _check("an empty entry never trips it up",
-                           A.expand_tokens("", 1, 1) == ""
-                           and A.expand_tokens(None, 1, 1) is None, "empty")
-    failures += not _check("n and i expand",
-                           A.expand_tokens("msg {n} of {i}", 7, 2) == "msg 7 of 2",
-                           A.expand_tokens("msg {n} of {i}", 7, 2))
-    failures += not _check("an unknown token survives untouched",
-                           A.expand_tokens("{nope} {date}", 1, 1)
-                           == "{nope} " + A.time.strftime("%Y-%m-%d"),
-                           A.expand_tokens("{nope} {date}", 1, 1))
-    # {n} must never reach into a longer word, or "{name}" would come out
-    # as "{1ame}"
-    failures += not _check("n never reaches into a longer word",
-                           A.expand_tokens("{name} {number} {i}", 9, 4)
-                           == "{name} {number} 4",
-                           A.expand_tokens("{name} {number} {i}", 9, 4))
-    failures += not _check("date and time read as a full stamp",
-                           A.expand_tokens("{date}|{time}", 1, 1)
-                           == A.time.strftime("%Y-%m-%d|%H:%M:%S"),
-                           A.expand_tokens("{date}|{time}", 1, 1))
+    print("message counter")
 
     # the counter belongs to the session, not to one worker: pausing would
     # otherwise restart it at one
-    counted = _Worker(["msg {n}", "line {i}"], False, 4)
+    counted = _Worker(["one", "two"], False, 4)
     A.AutoTyper._typing_worker(counted)
     failures += not _check("the counter ends on what was sent",
-                           counted._token_n == 4 and len(counted.typed) == 4,
-                           "%s %s" % (counted._token_n, counted.typed))
-    failures += not _check("each message carries its own number",
-                           # n climbs every send while i stays on the entry's
-                           # place in the pool - both meanings at once
-                           counted.typed == ["msg 1", "line 2", "msg 3", "line 2"],
+                           counted.stats["sent"] == 4 and len(counted.typed) == 4,
+                           "%s %s" % (counted.stats["sent"], counted.typed))
+    # nothing is rewritten at send time - the pool is typed exactly as stored
+    failures += not _check("each message goes out exactly as typed",
+                           counted.typed == ["one", "two", "one", "two"],
                            str(counted.typed))
 
     print("pause")

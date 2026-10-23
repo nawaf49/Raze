@@ -11,10 +11,6 @@ them for you into whatever app you are working in.
 - **Message interval** - the gap between each message, in seconds.
 - **Loop** - how many times to repeat the pool. `0` is infinite, `1` is a single pass.
 - **Random** - pick the next message at random instead of walking the list.
-- **Message tokens** - `{date}`, `{time}`, `{n}` and `{i}` are filled in when the
-  message goes out, so the same entry reads differently every round. `{n}` counts
-  up per send, `{i}` is the entry's place in the pool. Anything else inside
-  braces is left exactly as you typed it.
 - **Start / pause / stop hotkeys** - `F8`, `F6` and `F9` by default, all three
   changeable on the Hotkeys tab. Single keys (`F8`, `F6`, `F12` ...) or
   combinations (`ctrl+shift+f8`). Pause freezes the clock and keeps your session

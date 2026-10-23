@@ -38,7 +38,7 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 59 headless checks, run via `Raze.exe --selftest` |
+| `selftest.py` | 56 headless checks, run via `Raze.exe --selftest` |
 | `build_assets.py` | Regenerates `assets/` artwork from source |
 | `make_shortcut.py` | Start Menu + Desktop shortcut "Raze" |
 | `hooks/hook-PIL.Image.py` | Trims Pillow to the one codec we use. See *Build* |
@@ -137,20 +137,6 @@ Pause is not a lighter stop. Its entire value is that it keeps the session.
 - The heartbeat's live-status block has to skip while paused. Pause
   deliberately leaves `typing` set, so that block would overwrite
   `Paused`/amber with `Typing`/green a few milliseconds later. It did.
-
-## Message tokens
-
-`expand_tokens(text, n, i)` runs at send time, in the worker, and the result is
-what is counted, stored and shown.
-
-- `{date}` `%Y-%m-%d`, `{time}` `%H:%M:%S`, `{n}` messages sent this session
-  (reset on `_start`, survives pause), `{i}` the entry's 1-based position in
-  the pool.
-- Only these four exist. Everything else in braces is left byte for byte alone,
-  so a typo is visible rather than silently rewritten.
-- Substitution is a plain `.replace` on the token *including its closing brace*,
-  which is what stops `{n}` from reaching into `{name}`.
-- The editor is never modified. What the user typed stays as typed.
 
 ## Toast
 

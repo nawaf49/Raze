@@ -450,28 +450,6 @@ def is_foreground(hwnd):
         return False
 
 
-def expand_tokens(text, n, i):
-    """Substitute the placeholders a pool entry may use, at send time.
-
-    There are exactly four and anything else is left byte for byte as typed,
-    so a stray brace is never silently rewritten.  The work happens here
-    rather than in the editor: what went into the pool stays untouched, and
-    the same entry reads differently on every send.
-    """
-    if not text or "{" not in text:
-        return text
-    out = text
-    if "{date}" in out:
-        out = out.replace("{date}", time.strftime("%Y-%m-%d"))
-    if "{time}" in out:
-        out = out.replace("{time}", time.strftime("%H:%M:%S"))
-    if "{n}" in out:
-        out = out.replace("{n}", str(n))
-    if "{i}" in out:
-        out = out.replace("{i}", str(i))
-    return out
-
-
 # --- the notification the automatic stops raise -------------------------- #
 # Balloons go through Shell_NotifyIcon rather than a library: the process is
 # meant to sit there for years and has no business taking a dependency, or
@@ -1096,9 +1074,8 @@ class AutoTyper:
         self._raze_hwnd = 0
         self._tab_in_stop = False
         self._worker_error = None
-        # how many messages this session has sent, for {n}, and the pause
-        # request raised by the hotkey thread and read on the Tk thread
-        self._token_n = 0
+        # the pause request raised by the hotkey thread and read on the Tk
+        # thread - the one thing that crosses between the two
         self._pause_requested = False
         self._history_dirty = False
         self._last_save = 0.0
@@ -2478,7 +2455,6 @@ class AutoTyper:
         self._next_deadline = None
         self._last_message = ""
         self._stop_requested = False
-        self._token_n = 0
         self._worker_error = None
         # snapshot the settings on the UI thread (Tk vars are not thread safe)
         self._auto_enter = True
@@ -2603,20 +2579,16 @@ class AutoTyper:
                     self._tab_in_stop = True
                     break
 
-                # the counter only advances once the message is away, so a
+                # the counters only advance once the message is away, so a
                 # failed send never burns the number it was about to use
-                sending = self._token_n + 1
-                text = expand_tokens(message, sending, slot + 1)
-
-                if not self._type_text(text):
+                if not self._type_text(message):
                     break
-                self._token_n = sending
                 if auto_enter and not self.stop_event.is_set():
                     send_enter()
                 self.stats["sent"] += 1
-                self._last_message = text
+                self._last_message = message
                 stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self.history.append((stamp, text))
+                self.history.append((stamp, message))
                 day = stamp[:10]
                 self.daily[day] = self.daily.get(day, 0) + 1
                 self._history_dirty = True
