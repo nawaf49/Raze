@@ -176,6 +176,7 @@ def read_config(path=None):
     defaults = {
         "msg_interval": 2, "loop": 0, "random": False,
         "start_key": "f8", "stop_key": "f9", "pause_key": "f6",
+        "resume_key": "f7",
         "messages": []
     }
     target = path or config_path()
@@ -1088,6 +1089,7 @@ class AutoTyper:
         self.start_key = "f8"
         self.stop_key = "f9"
         self.pause_key = "f6"
+        self.resume_key = "f7"
         self.messages = []
         self.stats = {"sent": 0, "chars": 0, "elapsed": 0.0}
         self._next_deadline = None
@@ -1101,9 +1103,10 @@ class AutoTyper:
         self._raze_hwnd = 0
         self._tab_in_stop = False
         self._worker_error = None
-        # the pause request raised by the hotkey thread and read on the Tk
-        # thread - the one thing that crosses between the two
+        # the pause and resume requests raised by the hotkey thread and read
+        # on the Tk thread - the only thing that crosses between the two
         self._pause_requested = False
+        self._resume_requested = False
         self._history_dirty = False
         self._last_save = 0.0
         self._generation = 0
@@ -1554,12 +1557,13 @@ class AutoTyper:
 
         caps = ctk.CTkFrame(card, fg_color="transparent")
         caps.pack(fill="x", padx=24, pady=(0, 18))
-        for col in range(3):
+        for col in range(4):
             caps.grid_columnconfigure(col, weight=1, uniform="caps")
 
         for col, (key, cap_attr, caption) in enumerate((
                 (self.start_key, "key_cap_start", "start"),
                 (self.pause_key, "key_cap_pause", "pause"),
+                (self.resume_key, "key_cap_resume", "resume"),
                 (self.stop_key, "key_cap_stop", "stop"))):
             cell = ctk.CTkFrame(caps, fg_color="transparent")
             cell.grid(row=0, column=col, sticky="ew",
@@ -1588,8 +1592,8 @@ class AutoTyper:
 
         # the card starts where the removed headline used to sit, so nothing
         # is left floating 100 px below the top of the tab
-        card = Card(view, width=WIN_W - MARGIN * 2, height=282)
-        self._place_in(card, MARGIN, 96, WIN_W - MARGIN * 2, 282)
+        card = Card(view, width=WIN_W - MARGIN * 2, height=348)
+        self._place_in(card, MARGIN, 96, WIN_W - MARGIN * 2, 348)
 
         head = ctk.CTkFrame(card, fg_color="transparent")
         head.pack(fill="x", padx=26, pady=(24, 10))
@@ -1617,6 +1621,8 @@ class AutoTyper:
         self.hotkey_view_var = key_row("Start key", self.start_key, self._set_hotkey)
         self.pausekey_view_var = key_row("Pause key", self.pause_key,
                                          self._set_pause_hotkey)
+        self.resumekey_view_var = key_row("Resume key", self.resume_key,
+                                          self._set_resume_hotkey)
         self.stopkey_view_var = key_row("Stop key", self.stop_key, self._set_stop_hotkey)
         return view
 
@@ -2027,6 +2033,7 @@ class AutoTyper:
         self.start_key = c.get("start_key", c.get("hotkey", "f8"))
         self.stop_key = c.get("stop_key", "f9")
         self.pause_key = c.get("pause_key", "f6")
+        self.resume_key = c.get("resume_key", "f7")
         self.char_delay = 0.0
         self.msg_interval = c.get("msg_interval", 2.0)
         self.countdown = 0.0
@@ -2049,7 +2056,8 @@ class AutoTyper:
         # entry fields may not exist yet - they read these values when they do
         values = {"hotkey_view_var": self.start_key,
                   "stopkey_view_var": self.stop_key,
-                  "pausekey_view_var": self.pause_key}
+                  "pausekey_view_var": self.pause_key,
+                  "resumekey_view_var": self.resume_key}
         for name, value in values.items():
             var = getattr(self, name, None)
             if var is not None:
@@ -2075,6 +2083,7 @@ class AutoTyper:
             "start_key": self.start_key,
             "stop_key": self.stop_key,
             "pause_key": self.pause_key,
+            "resume_key": self.resume_key,
             "messages": self._collect_messages(),
             "random": self._random_pick,
             "history": [{"t": t, "m": m} for t, m in self.history[-HISTORY_KEEP:]],
@@ -2308,6 +2317,7 @@ class AutoTyper:
         self.hotkey_listener = hotkeymod.HotkeyListener()
         self.hotkey_listener.set_hotkey(self.start_key, self._request_start)
         self.hotkey_listener.set_hotkey(self.stop_key, self._request_stop)
+        self.hotkey_listener.set_hotkey(self.resume_key, self._request_resume)
         # registered last, so a duplicate key would silently take the others
         # over - every setter refuses a key another action already owns
         self.hotkey_listener.set_hotkey(self.pause_key, self._request_pause)
@@ -2325,12 +2335,16 @@ class AutoTyper:
         """Called from the hotkey thread - never touch Tk from here."""
         self._pause_requested = True
 
+    def _request_resume(self):
+        """Called from the hotkey thread - never touch Tk from here."""
+        self._resume_requested = True
+
     def _others_own(self, key, skip):
-        """Which of the other two actions already claimed this key."""
+        """Which of the other actions already claimed this key."""
         key = hotkeymod.normalise(key)
         return [(attr, value) for attr, value in (
             ("start", self.start_key), ("stop", self.stop_key),
-            ("pause", self.pause_key))
+            ("pause", self.pause_key), ("resume", self.resume_key))
             if attr != skip and hotkeymod.normalise(value) == key]
 
     def _open_github(self):
@@ -2416,6 +2430,31 @@ class AutoTyper:
         self._refresh_key_caps()
         self._save_config()
 
+    def _set_resume_hotkey(self):
+        key = self.resumekey_view_var.get().lower().strip()
+        if not key:
+            return
+        if not hotkeymod.is_valid(key):
+            messagebox.showerror("Invalid hotkey",
+                                 f"'{key}' is not a valid key.\n\n"
+                                 "Use a single key such as f7, or a combo such as ctrl+shift+f7.",
+                                 parent=self.root)
+            return
+        clash = self._others_own(key, "resume")
+        if clash:
+            messagebox.showerror("Hotkey in use",
+                                 f"{key} is already the {clash[0][0]} key.",
+                                 parent=self.root)
+            return
+        if not self.hotkey_listener.set_hotkey(key, self._request_resume):
+            messagebox.showerror("Hotkey error", f"Could not register {key}.", parent=self.root)
+            return
+        self._retire(self.resume_key, key)
+        self.resume_key = hotkeymod.normalise(key)
+        self.resumekey_view_var.set(self.resume_key)
+        self._refresh_key_caps()
+        self._save_config()
+
     def _retire(self, old, new):
         """Withdraw the key that was just replaced.
 
@@ -2435,6 +2474,8 @@ class AutoTyper:
             self.key_cap_stop.set_text(self.stop_key.upper())
         if getattr(self, "key_cap_pause", None):
             self.key_cap_pause.set_text(self.pause_key.upper())
+        if getattr(self, "key_cap_resume", None):
+            self.key_cap_resume.set_text(self.resume_key.upper())
 
     # ------------------------------------------------------------------ #
     #  Typing engine
@@ -2458,14 +2499,17 @@ class AutoTyper:
         return False
 
     def _start(self):
+        if self.paused:
+            # the keys are not each other's aliases: pause put this session
+            # to sleep and only the resume key wakes it, so start has no
+            # business undoing that behind the user's back.  It has to bail
+            # before the pool is read, or an empty one would pop a warning
+            # for a key that was meant to do nothing at all
+            return
         self.messages = self._collect_messages()
         if not self.messages:
             messagebox.showwarning("No messages", "Add at least one message before starting.",
                                     parent=self.root)
-            return
-        if self.paused:
-            # start and pause come down to the same thing: sending again
-            self._resume()
             return
         self._tab_in_stop = False
         if self._focus_refused():
@@ -2722,10 +2766,14 @@ class AutoTyper:
         # for the run ending and would be stopped properly
         if self._pause_requested:
             self._pause_requested = False
+            if self.typing and not self.paused:
+                self._pause()
+
+        # its own key, so pause can only pause and resume can only resume
+        if self._resume_requested:
+            self._resume_requested = False
             if self.paused:
                 self._resume()
-            elif self.typing:
-                self._pause()
 
         if self._worker_done:
             self._worker_done = False

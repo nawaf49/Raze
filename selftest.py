@@ -102,6 +102,20 @@ def run():
     failures += not _check("pretty date fallback",
                            A.pretty_day("nonsense") == "nonsense")
 
+    print("hotkey ownership")
+    # four actions, four owners - a collision check that forgot one of them
+    # would quietly let the last setter take a key over
+    class _Owned:
+        start_key, stop_key, pause_key, resume_key = "f8", "f9", "f6", "f7"
+
+    failures += not _check("the resume key counts as owned",
+                           A.AutoTyper._others_own(_Owned, "f7", "start")
+                           == [("resume", "f7")],
+                           str(A.AutoTyper._others_own(_Owned, "f7", "start")))
+    failures += not _check("an action may keep its own key",
+                           A.AutoTyper._others_own(_Owned, "f7", "resume") == [],
+                           str(A.AutoTyper._others_own(_Owned, "f7", "resume")))
+
     print("keystroke sender")
     # send_paste has to be exercised without sending anything: user32 is
     # swapped for a recorder, so no keystroke can possibly reach the desktop
@@ -356,6 +370,121 @@ def run():
                            and overridden._worker_done is True,
                            str((overridden._tab_in_stop, overridden._worker_done)))
 
+    # The four keys are deliberately not aliases of one another.  _tick_inner
+    # is driven straight on a stub so this needs no window, no desktop and no
+    # worker thread - the flags are the whole thread boundary, so setting them
+    # is exactly what pressing the key does
+    class _Tile:
+        def __init__(self):
+            self.value = None
+
+        def set(self, value, *args):
+            self.value = value
+
+    class _State:
+        def __init__(self, text=""):
+            self._text = text
+
+        def set_text(self, text):
+            self._text = text
+
+        def set_color(self, colour):
+            pass
+
+    class _Tick:
+        def __init__(self, paused, typing):
+            self.paused = paused
+            self.typing = typing
+            self.arming = False
+            self.calls = []
+            self._start_requested = False
+            self._stop_requested = False
+            self._pause_requested = False
+            self._resume_requested = False
+            self._worker_done = False
+            self._tab_in_stop = False
+            self._worker_error = None
+            self._session_start = None
+            self._next_deadline = None
+            self._last_message = ""
+            self._history_dirty = False
+            self._last_save = 0.0
+            self._pulse_on = False
+            self.stats = {"sent": 0, "chars": 0, "elapsed": 0.0}
+            self.session_state = _State()
+            self.tile_sent = _Tile()
+            self.tile_chars = _Tile()
+            self.tile_time = _Tile()
+            self.tile_next = _Tile()
+            self.last_label = _State()
+            self.stop_event = threading.Event()
+
+        def _start(self):
+            self.calls.append("start")
+
+        def _stop(self):
+            self.calls.append("stop")
+
+        def _pause(self):
+            self.calls.append("pause")
+
+        def _resume(self):
+            self.calls.append("resume")
+
+        def _set_status(self, *args):
+            pass
+
+        def _toast(self, *args):
+            self.calls.append("toast")
+
+        def _save_config(self):
+            pass
+
+        def _pulse_start(self):
+            self._pulse_on = True
+
+        def _pulse_stop(self):
+            self._pulse_on = False
+
+        def _focus_refused(self):
+            return False
+
+        def _collect_messages(self):
+            self.calls.append("collect")
+            return ["x"]
+
+    def tick(stub):
+        A.AutoTyper._tick_inner(stub)
+        return list(stub.calls)
+
+    live = _Tick(paused=False, typing=True)
+    live._pause_requested = True
+    failures += not _check("the pause key pauses a live run",
+                           tick(live) == ["pause"], str(live.calls))
+
+    # the whole point: pause may not be a way back out
+    asleep = _Tick(paused=True, typing=True)
+    asleep._pause_requested = True
+    failures += not _check("the pause key never resumes",
+                           tick(asleep) == [], str(asleep.calls))
+
+    awake = _Tick(paused=True, typing=True)
+    awake._resume_requested = True
+    failures += not _check("the resume key wakes a paused run",
+                           tick(awake) == ["resume"], str(awake.calls))
+
+    nothing = _Tick(paused=False, typing=False)
+    nothing._resume_requested = True
+    failures += not _check("the resume key is silent when nothing is paused",
+                           tick(nothing) == [], str(nothing.calls))
+
+    # start has to bail before it reads the pool, so an empty one cannot
+    # raise a warning for a key that was meant to do nothing
+    paused_start = _Tick(paused=True, typing=True)
+    A.AutoTyper._start(paused_start)
+    failures += not _check("the start key does nothing to a paused run",
+                           paused_start.calls == [], str(paused_start.calls))
+
     print("notification")
 
     # Explorer refuses a wrong cbSize by returning FALSE rather than reading
@@ -398,6 +527,12 @@ def run():
         failures += not _check("reads the config", data.get("loop") == 7, str(data))
         failures += not _check("keeps the history",
                                len(data.get("history", [])) == 1, str(data.get("history")))
+
+        # the fourth key arrives through the defaults, so a config written
+        # before it existed picks it up without ever having mentioned it
+        failures += not _check("an older config gets the resume key",
+                               data.get("resume_key") == "f7",
+                               str(data.get("resume_key")))
 
         # a stray byte order mark must not make the config look unreadable
         with io.open(cfg, "w", encoding="utf-8-sig") as fh:

@@ -96,12 +96,19 @@ and it never competes with Tk for the GIL.
 - The listener **only ever adds** bindings. Changing a key must also call
   `remove_hotkey` on the old one or it stays armed beside the new one. This is
   what `_retire()` does. It bit us once.
-- Three keys: `start_key` (F8), `pause_key` (F6), `stop_key` (F9). All
-  rebindable. `_others_own()` refuses a key another action already has, because
-  registration order would otherwise let the last one silently win.
+- Four keys: `start_key` (F8), `pause_key` (F6), `resume_key` (F7),
+  `stop_key` (F9). All rebindable. `_others_own()` refuses a key another
+  action already has, because registration order would otherwise let the last
+  one silently win.
+- **The keys are not each other's aliases.** Pause only ever pauses and resume
+  only ever resumes: F6 may not wake what it put to sleep, and F8 does nothing
+  at all to a paused session. The user was explicit — "the hotkeys aren't
+  meant for each other". This is why `_start()` opens with a `paused` guard
+  and why `_pause_requested` is no longer a toggle.
 - The listener must **never touch Tk**. It sets `_start_requested` /
-  `_stop_requested` / `_pause_requested` and the Tk-thread heartbeat consumes
-  them. That is the only thread boundary in the app.
+  `_stop_requested` / `_pause_requested` / `_resume_requested` and the
+  Tk-thread heartbeat consumes them. That is the only thread boundary in the
+  app.
 
 ## Focus guard
 
@@ -133,7 +140,9 @@ Pause is not a lighter stop. Its entire value is that it keeps the session.
 - `_stop()` clears `paused`.
 - **`_tick_inner` ordering is load-bearing.** `_pause_requested` must be
   consumed *before* `_worker_done`, because the flag hand-off only works if
-  `paused` is already set when the worker reads it.
+  `paused` is already set when the worker reads it. `_resume_requested` sits
+  immediately after it; it has no such hazard, because a plain pause never
+  raises `_worker_done` for it to race with.
 - The heartbeat's live-status block has to skip while paused. Pause
   deliberately leaves `typing` set, so that block would overwrite
   `Paused`/amber with `Typing`/green a few milliseconds later. It did.
@@ -141,7 +150,7 @@ Pause is not a lighter stop. Its entire value is that it keeps the session.
 ## Toast
 
 Shown only for endings the user did not choose: pool ran out, worker error,
-tabbed back in. **Never** on F9 or pause — they already know why.
+tabbed back in. **Never** on F9, pause, or resume — they already know why.
 
 - `Shell_NotifyIconW` is exported by **shell32.dll, not user32.dll**. Every
   call here sits inside a `try/except`, so pointing at the wrong DLL was
@@ -155,7 +164,8 @@ tabbed back in. **Never** on F9 or pause — they already know why.
 ## Config
 
 `%APPDATA%\Raze\config.json`. Keys: `msg_interval`, `loop`, `random`,
-`start_key`, `stop_key`, `pause_key`, `messages`, `history`, `daily`.
+`start_key`, `stop_key`, `pause_key`, `resume_key`, `messages`, `history`,
+`daily`.
 
 - `history` is a list of `{"t": "...", "m": "..."}`, capped at `HISTORY_KEEP`.
   Content and timestamps are **stored but never displayed** — the History tab
