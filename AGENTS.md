@@ -38,7 +38,7 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 56 headless checks, run via `Raze.exe --selftest` |
+| `selftest.py` | 66 headless checks, run via `Raze.exe --selftest` |
 | `build_assets.py` | Regenerates `assets/` artwork from source |
 | `make_shortcut.py` | Start Menu + Desktop shortcut "Raze" |
 | `hooks/hook-PIL.Image.py` | Trims Pillow to the one codec we use. See *Build* |
