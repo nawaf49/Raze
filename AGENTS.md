@@ -75,7 +75,7 @@ These are not preferences. Breaking one silently ruins the product.
 | `layout_check.py` | 19 checks: the four keycaps and the hotkeys card, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `rpc.py` | Discord presence: named pipe over ctypes, its own thread |
-| `rpc_check.py` | 47 checks: the presence protocol against a fake local pipe |
+| `rpc_check.py` | 49 checks: the presence protocol against a fake local pipe |
 | `build_assets.py` | Regenerates `assets/` artwork from source |
 | `make_shortcut.py` | Start Menu + Desktop shortcut "Raze" |
 | `AGENTS.md` | This file — read it first |
@@ -222,17 +222,23 @@ payload that is unpacked from scratch on every launch.
 - **Discord not running is the ordinary case, not an error.** The thread
   reconnects every 5 s forever and does nothing in between. It pushes on
   change only, never more than once a second.
-- The Tk thread's entire interface is `set_state(status, sent, lifetime,
-  elapsed)` — four values under one lock. The heartbeat feeds it once per
+- The Tk thread's entire interface is `set_state(status, lifetime,
+  total_secs)` — three values under one lock. The heartbeat feeds it once per
   tick; every byte of I/O happens on the presence thread.
-- **The timer is only handed over while the clock actually runs.** Discord
-  draws it client-side from `start`, so a frozen `elapsed` would drift
-  forward between pushes and snap back on each one. A paused session shows
-  no timer at all.
-- The state line counts the **session** while one is live — it matches the
-  session card — and falls back to the **lifetime total** from `daily` when
-  there is not.
-- The activity carries one **button** — `Download` → the public repo, never the
+- **The timer never starts over.** It counts from `_total_secs`, the lifetime
+  twin of `stats["elapsed"]`, accumulated in `_tick_inner` by the same delta
+  the session clock moved and stored as `total_secs` in the config — so a new
+  session picks it up where the last one left it instead of returning to zero,
+  and a pause costs it nothing (pause nulls `_session_start`, so the
+  accumulating block does not even run). It is handed over only while the clock
+  actually runs: Discord draws it client-side from `start`, and a frozen total
+  would drift forward between pushes and snap back on each one, which is why a
+  paused session shows no timer at all.
+- The state line is **always the lifetime total** from `daily`, never the
+  session's own count. The session card is the place for that number; a profile
+  is a stranger's view, and the only number worth showing a stranger is the one
+  that never goes down.
+- The activity carries one **button** — `Get Raze` → the public repo, never the
   source one. That is the real point of a presence: a stranger sees the
   activity and has somewhere to go. `REPO_URL` and `BUTTON_LABEL` are the two
   constants. Discord does not always draw the button for the account that set
@@ -250,8 +256,12 @@ payload that is unpacked from scratch on every launch.
 
 `%APPDATA%\Raze\config.json`. Keys: `msg_interval`, `loop`, `random`,
 `start_key`, `stop_key`, `pause_key`, `resume_key`, `messages`, `history`,
-`daily`.
+`daily`, `total_secs`.
 
+- `total_secs` is **lifetime typing seconds** — the presence timer counts from
+  it, which is why that timer never starts over. It is absent from configs
+  written before the presence existed, and that is fine: it starts at zero and
+  grows from there.
 - `history` is a list of `{"t": "...", "m": "..."}`, capped at `HISTORY_KEEP`.
   Content and timestamps are **stored but never displayed** — the History tab
   shows day counts and a lifetime total only.
@@ -291,8 +301,9 @@ being verified.
   - `layout_check.py` — 19 checks. The four keycaps read `F8`/`F6`/`F7`/`F9`
     and fit their frames, the hotkeys card still fits its tab at 348 px, and it
     captures `typer.png` / `hotkeys.png` for the eye to check.
-  - `rpc_check.py` — 47 checks. The presence protocol end to end: handshake,
-    all three activity shapes, the repo button, ping/pong, the push throttle,
+  - `rpc_check.py` — 49 checks. The presence protocol end to end: handshake,
+    all three activity shapes, the repo button, the proof that a later session
+    picks the clock up rather than restarting it, ping/pong, the push throttle,
     the clear-down on exit, byte- and message-mode pipes, and the disabled
     seam. It swaps `rpc._PIPES` for a pipe it creates itself, so **Discord's
     real pipe is never opened** even while Discord is running.

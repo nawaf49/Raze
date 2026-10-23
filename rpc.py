@@ -10,7 +10,7 @@ whole http stack) into a payload that is unpacked from scratch on every
 launch.
 
 The thread owns the pipe and never touches Tk.  The Tk thread only ever
-writes four values through set_state(); every byte of I/O happens over here.
+writes three values through set_state(); every byte of I/O happens over here.
 Discord not running is not an error - it is the ordinary case, and it is
 retried quietly forever.
 """
@@ -29,7 +29,7 @@ CLIENT_ID = "1563320594743693483"
 # The one thing a presence is really for: a stranger sees the activity and
 # has somewhere to go.  The public repo, never the source one.
 REPO_URL = "https://github.com/nawaf49/Raze"
-BUTTON_LABEL = "Download"
+BUTTON_LABEL = "Get Raze"
 
 # Harnesses turn this off before they build a real AutoTyper, for the same
 # reason they stub the toast: a test must never put anything on the user's
@@ -94,9 +94,8 @@ class Presence:
         self.client_id = client_id
         self._lock = threading.Lock()
         self._status = "IDLE"
-        self._sent = 0
         self._lifetime = 0
-        self._elapsed = 0.0
+        self._total_secs = 0.0
         self._stop = threading.Event()
         self._thread = None
         self._handle = None
@@ -106,15 +105,14 @@ class Presence:
         self._last_activity = None
 
     # ------------------------------------------------------------------ #
-    #  the whole Tk-thread interface: four values, one lock, no I/O
+    #  the whole Tk-thread interface: three values, one lock, no I/O
     # ------------------------------------------------------------------ #
-    def set_state(self, status, sent, lifetime, elapsed):
+    def set_state(self, status, lifetime, total_secs):
         try:
             with self._lock:
                 self._status = status or "IDLE"
-                self._sent = int(sent or 0)
                 self._lifetime = int(lifetime or 0)
-                self._elapsed = float(elapsed or 0.0)
+                self._total_secs = float(total_secs or 0.0)
         except Exception:
             pass
 
@@ -195,31 +193,30 @@ class Presence:
     # ------------------------------------------------------------------ #
     def _activity(self):
         with self._lock:
-            status, sent = self._status, self._sent
-            lifetime, elapsed = self._lifetime, self._elapsed
+            status = self._status
+            lifetime = self._lifetime
+            total_secs = self._total_secs
 
         details = {"TYPING": "Typing",
                    "PAUSED": "Paused",
                    "TAB OUT": "Waiting for your app"}.get(status, "Idle")
 
-        # A session in progress counts its own messages, which is what the
-        # session card shows.  With no session the count is stale or zero, so
-        # the lifetime total is the number worth putting on screen.
-        if sent > 0:
-            state = "%d message%s sent" % (sent, "" if sent == 1 else "s")
-        else:
-            state = "%d message%s all time" % (lifetime,
-                                               "" if lifetime == 1 else "s")
+        # The lifetime count, always.  The session's own number belongs on
+        # the session card; a profile is a stranger's view, and the only
+        # number worth showing a stranger is the one that never goes down.
+        state = "%d message%s sent" % (lifetime, "" if lifetime == 1 else "s")
 
         activity = {"details": details, "state": state, "instance": False,
                     "buttons": [{"label": BUTTON_LABEL, "url": REPO_URL}]}
 
-        # Discord draws the timer itself from `start`, so it only needs
-        # handing over while the clock is actually running.  A frozen elapsed
-        # would otherwise drift forward between pushes and snap back on each
-        # one - which is why a paused session shows no timer at all.
-        if status == "TYPING" and elapsed > 0:
-            activity["timestamps"] = {"start": int(time.time() - elapsed)}
+        # Discord draws the timer itself from `start`.  `start` comes from the
+        # lifetime total, so a new session picks the clock up where the last
+        # one left it instead of starting over - which is the whole point.  It
+        # is handed over only while the clock is actually running: a frozen
+        # total would drift forward between pushes and snap back on each one,
+        # which is why a paused session shows no timer at all.
+        if status == "TYPING":
+            activity["timestamps"] = {"start": int(time.time() - total_secs)}
         return activity
 
     # ------------------------------------------------------------------ #

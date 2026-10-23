@@ -1093,6 +1093,10 @@ class AutoTyper:
         self.resume_key = "f7"
         self.messages = []
         self.stats = {"sent": 0, "chars": 0, "elapsed": 0.0}
+        # lifetime typing seconds, kept beside the session clock and stored in
+        # the config - the presence counts from this so its timer never starts
+        # over, however many sessions come and go
+        self._total_secs = 0.0
         self._next_deadline = None
         self._session_start = None
         self._last_message = ""
@@ -2081,6 +2085,12 @@ class AutoTyper:
             for stamp, _message in self.history:
                 day = stamp[:10]
                 self.daily[day] = self.daily.get(day, 0) + 1
+        # absent from any config written before the presence existed, which is
+        # fine - it simply starts at zero and grows from there
+        try:
+            self._total_secs = float(c.get("total_secs") or 0.0)
+        except Exception:
+            self._total_secs = 0.0
         msgs = c.get("messages") or ["Hello there!", "How can I help you?", "Have a great day!"]
         self.editor.insert("1.0", "\n".join(msgs))
         self._update_pool_meta()
@@ -2097,6 +2107,7 @@ class AutoTyper:
             "random": self._random_pick,
             "history": [{"t": t, "m": m} for t, m in self.history[-HISTORY_KEEP:]],
             "daily": self.daily,
+            "total_secs": round(self._total_secs, 3),
         })
         try:
             write_config(self.cfg)
@@ -2818,20 +2829,25 @@ class AutoTyper:
                                 % (sent, "" if sent == 1 else "s"))
 
         if self._session_start and (self.typing or self.arming):
-            self.stats["elapsed"] = time.monotonic() - self._session_start
+            elapsed = time.monotonic() - self._session_start
+            # the lifetime total moves by exactly what the session moved by,
+            # so nothing is counted twice and a pause costs it nothing - pause
+            # nulls _session_start, so this block does not even run then
+            self._total_secs += elapsed - self.stats["elapsed"]
+            self.stats["elapsed"] = elapsed
 
         self.tile_sent.set(str(self.stats["sent"]), GREEN if self.stats["sent"] else TEXT)
         self.tile_chars.set(str(self.stats["chars"]))
         mins, secs = divmod(int(self.stats["elapsed"]), 60)
         self.tile_time.set(f"{mins:02d}:{secs:02d}")
 
-        # Hand the presence thread its four values.  It decides on its own
+        # Hand the presence thread its three values.  It decides on its own
         # whether anything is worth pushing to Discord, so this stays cheap
         # enough to run on every heartbeat tick.
         try:
-            self.presence.set_state(self._rpc_status, self.stats["sent"],
+            self.presence.set_state(self._rpc_status,
                                     sum(self.daily.values()),
-                                    self.stats["elapsed"])
+                                    self._total_secs)
         except Exception:
             pass
 

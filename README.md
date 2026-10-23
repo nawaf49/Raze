@@ -19,8 +19,9 @@ them for you into whatever app you are working in.
 - **History** - how many messages went out on every day, grouped by date.
   It is permanent: it stays until the app data is deleted.
 - **Discord presence** - while Raze runs, your Discord profile shows whether it
-  is typing, paused or idle, how long the session has lasted, and how many
-  messages have gone out, with a **Download** button pointing at the public
+  is typing, paused or idle, the total number of messages ever sent, and a
+  timer of everything Raze has typed - which picks up where it left off rather
+  than starting over. The entry carries a **Get Raze** button to the public
   repo. It appears whenever Discord is open and takes itself down when Raze
   closes.
 - Everything is typed with `Enter` afterwards, automatically.
