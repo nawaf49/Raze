@@ -12,6 +12,38 @@ application currently has focus, one per interval, with Enter after each.
 The visual direction is original — pure
 black, quiet, premium, no chrome. Everything else here is original.
 
+## Two repos
+
+| Repo | Holds |
+| --- | --- |
+| `nawaf49/Raze-source` (private) | Everything: source, assets, this file, the source-side `README.md` |
+| `nawaf49/Raze` (public) | Downloads only: `README.md`, `app_icon.png`, and Releases carrying the exe |
+
+- **The public repo is never cloned.** It is driven through the GitHub API with
+  `gh`: read the file's `sha`, base64 the new bytes, build a JSON payload, then
+  `gh api -X PUT repos/.../contents/... --input payload.json`. Write the payload
+  with `ConvertTo-Json` and a UTF8-without-BOM writer.
+- **The exe never enters git, in either repo.** It ships as a Release asset and
+  is gitignored here.
+- **The public repo's history is a single commit**, `Raze`. It used to be a
+  dozen commits whose messages narrated their own changes — `simpler wording`,
+  `center the title`, `App icon for the README title`. The user's objection:
+  "people will say this is ai". It was squashed rather than edited one message
+  at a time because every message in there was the same species, then
+  force-pushed. Tags are separate refs, so the Release and its asset survived
+  untouched.
+- The `README.md` in **this** repo is the developer-facing one: it carries
+  *Build from source* and *Credits*, which the public one deliberately omits.
+  They are not copies of each other. Fix drift by editing whichever is wrong —
+  never by copying one over the other.
+
+## Commit messages
+
+Plain and unadorned: `README`, `resume hotkey`, `fix profile folder name`,
+`agent notes`. **Never describe what you changed.** Multi-line messages go in a
+file passed as `git commit -F file` — a bare multi-line `-m` is parsed as a
+pathspec and fails confusingly.
+
 ## Hard rules
 
 These are not preferences. Breaking one silently ruins the product.
@@ -39,8 +71,15 @@ These are not preferences. Breaking one silently ruins the product.
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
 | `selftest.py` | 66 headless checks, run via `Raze.exe --selftest` |
+| `pause_and_toast.py` | 27 checks: pause/resume/toast routing against a real window |
+| `layout_check.py` | 19 checks: the four keycaps and the hotkeys card, captures both tabs |
+| `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `build_assets.py` | Regenerates `assets/` artwork from source |
 | `make_shortcut.py` | Start Menu + Desktop shortcut "Raze" |
+| `AGENTS.md` | This file — read it first |
+| `README.md` | The **source-side** readme, not the public one. See *Two repos* |
+| `app_icon.png` | The dark tile; the public README title references it by this exact name |
+| `raze_emblem_src.png` | Source artwork the emblem is generated from |
 | `hooks/hook-PIL.Image.py` | Trims Pillow to the one codec we use. See *Build* |
 | `assets/` | Emblem, background, the 7 Inter faces, `raze.ico` |
 
@@ -194,6 +233,22 @@ being verified.
 - `selftest.py` stubs the app with a `_Worker` class that replaces `_type_text`.
   New worker behaviour needs new fields on that stub or it raises silently
   inside the worker's `except`.
+- **Three harnesses are committed** next to it, and all three are non-intrusive
+  by construction: `send_enter`, `notify_balloon` and `is_foreground` are
+  replaced with recorders, the window is built at alpha 0, and nothing is ever
+  typed, surfaced or focused.
+  - `pause_and_toast.py` — 27 checks. Pause keeps the session, pause cannot
+    resume, start-while-paused does nothing, F9 is silent, and the two endings
+    the user did not choose do toast.
+  - `layout_check.py` — 19 checks. The four keycaps read `F8`/`F6`/`F7`/`F9`
+    and fit their frames, the hotkeys card still fits its tab at 348 px, and it
+    captures `typer.png` / `hotkeys.png` for the eye to check.
+  - `capture_window.py` — the PrintWindow helper `layout_check.py` uses.
+  Run them with `python <file>` from the project root; each prints
+  `RESULT: PASS` and exits 0.
+- One-off scratch scripts from past sessions sit in `%TEMP%\opencode`
+  (`patch_*.py`, `profile_*.py`, ...). They are deliberately not committed —
+  they were single-use edits against file states that no longer exist.
 
 ## Build
 
@@ -222,9 +277,86 @@ open — the single-instance check reports honestly in both states.
 
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
-- The exe goes on a **Release** on the public repo:
-  `gh release create v1.1 dist\Raze.exe --repo nawaf49/Raze --notes "..."`
-- Attach the SHA256 in the notes so people can verify.
+- **Exactly one release exists at a time.** When the next one ships, delete the
+  old: `gh release delete v1.3 --repo nawaf49/Raze --yes`. The user's rule — a
+  visitor sees one clear download, never a menu of old versions. The private
+  repo's git log is the only remaining record of what v1.0–v1.2 contained.
+  **Current: v1.3.**
+- Create it as a real release, not a draft; it becomes *Latest* on its own:
+  `gh release create v1.4 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
+- **Verify before publishing.** `Get-FileHash .\dist\Raze.exe -Algorithm SHA256`
+  must equal the digest GitHub reports for the uploaded asset; the SHA256 that
+  goes in the notes comes from that match, never from a build nobody re-checked.
+  (v1.3: `195B26143C1316AC57628EBB18B70F2C2F8966D7A3CAF32498DEB65388E8AADF`
+  over 16,065,394 bytes, both sides confirmed identical.)
+- **The notes format never changes** — same shape, same order, every time:
+
+```text
+Single file. No install, no folder to keep.
+
+**SHA256** `<hex>`
+
+## What's in it
+
+- <one line per user-visible feature>
+
+## Hotkeys
+
+| Key | Action |
+| --- | --- |
+| `F8` | Start |
+| `F6` | Pause |
+| `F7` | Resume |
+| `F9` | Stop |
+
+Tab to your application first — Raze won't start while it's the window in front,
+and stops if you tab back in.
+```
+
+  Read the published one back with
+  `gh release view v1.3 --repo nawaf49/Raze --json body --jq .body`.
+
+## The public README
+
+Lives in the public repo only, edited through the API. These are settled
+decisions — do not re-open one without asking:
+
+- **Wording.** The user's rule, in his own words: "please display it in a
+  simple way. users won't know what you're talking about if you don't say what
+  you're talking about. i'm all for simplisicty." Concretely: every section
+  opens by saying what it is about before it uses a term, and every bullet
+  names its own subject — "Choose how many seconds pass between messages, and
+  how many times **Raze** goes through the list" — rather than hanging off an
+  implied one. All features stay listed; they just get short.
+- **The title line is measured, not eyeballed:**
+  `<h1 align="center"><img src="app_icon.png" width="43" align="top" alt=""> Raze</h1>`
+  - `align="middle"` is wrong on GitHub: Blink maps it to
+    `-webkit-baseline-middle`, which pins the image centre to the **baseline**.
+    The icon hung 11.5 px below the optical centre of "Raze" and the user
+    spotted it at a glance — "look how uneven they are".
+  - The target is the glyph box centre of the word, cap top to baseline. On the
+    live page: baseline 571, cap height 23, target 559.5.
+  - Sweeping every `align` value against every plausible size on the real page
+    gave `align="top"` + `width="43"` = **0.0 px**. `align="absmiddle"` (+3.5 px)
+    was tried first and works, but `top` is standard HTML4 and cannot be quietly
+    stripped the way an exotic value might be.
+  - How to measure, since it has to be done on the published page: in the
+    browser console, drop a zero-height `inline-block` span with
+    `vertical-align: baseline` immediately after the word — its
+    `getBoundingClientRect().bottom` **is** the baseline. Take the cap height
+    from a canvas `measureText('Raze').actualBoundingBoxAscent`. The target
+    centre is `baseline - capHeight/2`; compare that to the image's own
+    centre. No clone is needed, and the public repo is driven through the API
+    anyway.
+  - Re-measure after any edit. Changing the line box moves the baseline, so a
+    delta computed before a change is meaningless after it — this bit us once.
+- **Badges** are `flat-square`, `color=141418` (`SURFACE_2`), label green
+  `22c55e` for downloads and blue `2f6bff` for platform — the app palette, not
+  shields.io's defaults.
+- **No checksum section.** Users do not verify hashes; the SHA256 lives in the
+  release notes only. Links point at `releases/latest`, never a pinned version.
+- The logo file is `app_icon.png`, referenced relatively. The name is
+  load-bearing — renaming it breaks the title line silently.
 
 ## Deliberately absent
 
