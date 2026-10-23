@@ -5,6 +5,11 @@ dist/
 build/
 Raze.spec
 
+# Staging builds (used when dist/Raze.exe is locked by a running instance).
+# _stage*/ catches both the output and PyInstaller's work directory, so a
+# rebuild can never be swept into a commit by `git add -A`.
+_stage*/
+
 # Python
 __pycache__/
 *.py[cod]
