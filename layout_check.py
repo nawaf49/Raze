@@ -42,6 +42,27 @@ def main():
     root.update_idletasks()
 
     def measure():
+        # the whole point of the fit clamp: on a screen smaller than the
+        # design, the app used to run off the bottom edge with no way to
+        # reach the session card or the footer
+        aw, ah = A._work_area()
+        # the window's own frame (borders + title bar) sits outside the
+        # client area, so it has to fit too
+        need_w = root.winfo_width() + A.FRAME_W
+        need_h = root.winfo_height() + A.FRAME_H
+        check("the window fits the work area's width",
+              0 < need_w <= aw, "%s in %s" % (need_w, aw))
+        check("the window fits the work area's height",
+              0 < need_h <= ah, "%s in %s" % (need_h, ah))
+        check("the client area is the design at the clamped scale",
+              abs(root.winfo_width() - A.px(A.WIN_W)) <= 2
+              and abs(root.winfo_height() - A.px(A.WIN_H)) <= 2,
+              "%sx%s vs %sx%s" % (root.winfo_width(), root.winfo_height(),
+                                  A.px(A.WIN_W), A.px(A.WIN_H)))
+        check("the scale is the clamped one, not the raw dpi scale",
+              abs(A.S - A._fit_scale(A._device_scale(), aw, ah)) < 1e-9,
+              "%s (dpi %s)" % (A.S, A._device_scale()))
+
         print("keycaps (typer)")
         for attr, expect in (("key_cap_start", "F8"),
                              ("key_cap_pause", "F6"),

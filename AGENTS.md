@@ -70,9 +70,9 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 69 headless checks, run via `Raze.exe --selftest` |
+| `selftest.py` | 79 headless checks, run via `Raze.exe --selftest` |
 | `pause_and_toast.py` | 27 checks: pause/resume/toast routing against a real window |
-| `layout_check.py` | 19 checks: the four keycaps and the hotkeys card, captures both tabs |
+| `layout_check.py` | 22 checks: the window fits the work area, the four keycaps and the hotkeys card, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `rpc.py` | Discord presence: named pipe over ctypes, its own thread |
 | `rpc_check.py` | 49 checks: the presence protocol against a fake local pipe |
@@ -105,6 +105,44 @@ AMBER     #f59e0b   warnings and refusals only
 
 Layout constants: window `1060x860`, nav `68` high, content from `y=96`.
 `TICK_MS = 50` (heartbeat), `SAVE_EVERY = 60`, `HISTORY_KEEP = 200`.
+
+## Scaling and fitting
+
+The process is DPI aware and draws everything through **one** factor, `S`
+(device pixels per design pixel: 1.0 at 100%, 1.25 at 125%, …). `S` is fixed
+at import and then **clamped to fit the screen**: `_fit_scale(S, *_work_area())`
+shrinks it until `WIN_W*S + FRAME_W` and `WIN_H*S + FRAME_H` fit the primary
+monitor's work area, floored at `SCALE_MIN = 0.5`. The design is a fixed
+1060x860 and the window is not resizable, so without the clamp a 1366x768
+laptop or a 1080p screen at 125% simply loses the session card and the footer
+off the bottom edge with no way to reach them. Everything — `px()`, CTk
+scaling, baked artwork — rides on `S`, so shrinking it takes the whole app
+down together, still sharp.
+
+- `RAZE_SCALE` env var sets `S` exactly and **bypasses the clamp** — a
+  debugging hatch for geometry tests, never set it for a real user.
+- `_work_area()` is `SPI_GETWORKAREA` on the primary monitor (taskbar
+  excluded), `GetSystemMetrics` as fallback, `1920x1080` as last resort.
+  `_center_window` centres against it too, or the bottom edge hides under
+  the taskbar.
+- **The device/design pixel rule.** Everything written in the code is design
+  px; `px()` converts once, at the boundary. Two boundaries exist:
+  - **plain tk widgets** (`tk.Frame`, `tk.Label`, `BakedLabel`, and every
+    raw `self.root.tk.call("place", …)`) are NOT scaled by customtkinter —
+    pass them `px(...)` device px.
+  - **CTk widgets** scale their own `configure(width=…)`, `place` x/y and
+    `pack`/`grid` padx/pady by `S` — pass them **design px, never
+    `px()`**. A `px()` inside a CTk pack doubles the offset at 150%.
+  - `CTkToplevel.geometry()` scales the `WxH` string but passes `+x+y`
+    through raw — design px for the size, device px for the position.
+  - `winfo_reqwidth()/winfo_width()` always report **device px**. If the
+    value feeds design-px arithmetic (nav layout, tab centres), divide it
+    by `S` first. `winfo_rootx/y()` diffs are device px and belong on raw
+    tk `place_configure` calls as-is.
+- The opening animation places widgets at their travel start (`x+dx, y+dy`)
+  and settles them in `_play_intro`. Its reduce-motion branch must settle
+  them too, or users with "turn off unnecessary animations" on get a
+  permanently 10–18 px offset interface.
 
 ## Baked text
 
@@ -325,9 +363,11 @@ being verified.
   - `pause_and_toast.py` — 27 checks. Pause keeps the session, pause cannot
     resume, start-while-paused does nothing, F9 is silent, and the two endings
     the user did not choose do toast.
-  - `layout_check.py` — 19 checks. The four keycaps read `F8`/`F6`/`F7`/`F9`
-    and fit their frames, the hotkeys card still fits its tab at 348 px, and it
-    captures `typer.png` / `hotkeys.png` for the eye to check.
+  - `layout_check.py` — 22 checks. The window fits the work area's width and
+    height with its frame, the client area is the design at the clamped scale,
+    the four keycaps read `F8`/`F6`/`F7`/`F9` and fit their frames, the hotkeys
+    card still fits its tab at 348 px, and it captures `typer.png` /
+    `hotkeys.png` for the eye to check.
   - `rpc_check.py` — 49 checks. The presence protocol end to end: handshake,
     all three activity shapes, the repo button, the proof that a later session
     picks the clock up rather than restarting it, ping/pong, the push throttle,
@@ -369,17 +409,17 @@ open — the single-instance check reports honestly in both states.
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
 - **Exactly one release exists at a time.** When the next one ships, delete the
-  old: `gh release delete v1.5 --repo nawaf49/Raze --yes`. The user's rule — a
+  old: `gh release delete v1.6 --repo nawaf49/Raze --yes`. The user's rule — a
   visitor sees one clear download, never a menu of old versions. The private
-  repo's git log is the only remaining record of what v1.0–v1.4 contained.
-  **Current: v1.5.**
+  repo's git log is the only remaining record of what v1.0–v1.5 contained.
+  **Current: v1.6.**
 - Create it as a real release, not a draft; it becomes *Latest* on its own:
-  `gh release create v1.6 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
+  `gh release create v1.7 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
 - **Verify before publishing.** `Get-FileHash .\dist\Raze.exe -Algorithm SHA256`
   must equal the digest GitHub reports for the uploaded asset; the SHA256 that
   goes in the notes comes from that match, never from a build nobody re-checked.
-  (v1.5: `128DE507F7937A149592F3F64589366A4B8B231600D1C65897E1F639926EF091`
-  over 16,107,751 bytes, both sides confirmed identical.)
+  (v1.6: `7125F6EAB1C4F5805AD77896D4559147D9426ED95E1A50EFC587A428230A59CB`
+  over 16,110,518 bytes, both sides confirmed identical.)
 - **The notes format never changes** — same shape, same order, every time:
 
 ```text

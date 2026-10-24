@@ -653,6 +653,62 @@ def _device_scale():
 
 S = _device_scale()       # 1.0 on a standard display, 1.5 on a 150% 4K screen
 
+# The frame Windows draws around the client area - borders plus title bar -
+# at the display's own dpi.  The design grid never sees it, but anything
+# that has to fit on screen has to leave room for it.  Measured 16x39 at
+# 100%; the extra is slack for larger title bars.
+FRAME_W, FRAME_H = 24, 48
+SCALE_MIN = 0.5           # below this the app is too small to be usable
+
+
+def _fit_scale(dpi_scale, avail_w, avail_h):
+    """Shrink the scale so the whole window fits the screen it opens on.
+
+    The design is a fixed 1060x860 and the window is not resizable, so on
+    a screen smaller than that - a 1366x768 laptop, or a 1080p display at
+    125% - the session card and the footer used to sit past the bottom
+    edge with no way to reach them.  Everything on screen is drawn through
+    this one factor, so shrinking it takes the whole app down together,
+    still sharp: the baked artwork is re-rendered at the new size rather
+    than stretched.
+    """
+    if avail_w <= 0 or avail_h <= 0:      # no usable work area reported
+        return dpi_scale
+    room_w = (avail_w - int(FRAME_W * dpi_scale)) / WIN_W
+    room_h = (avail_h - int(FRAME_H * dpi_scale)) / WIN_H
+    return max(SCALE_MIN, min(dpi_scale, room_w, room_h))
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+def _work_area():
+    """The primary monitor's work area in device pixels (taskbar excluded)."""
+    try:
+        rect = _RECT()
+        ok = ctypes.windll.user32.SystemParametersInfoW(
+            0x0030, 0, ctypes.byref(rect), 0)      # SPI_GETWORKAREA
+        if ok and rect.right > rect.left and rect.bottom > rect.top:
+            return rect.right - rect.left, rect.bottom - rect.top
+    except Exception:
+        pass
+    try:
+        w = ctypes.windll.user32.GetSystemMetrics(0)
+        h = ctypes.windll.user32.GetSystemMetrics(1)
+        if w > 0 and h > 0:
+            return w, h
+    except Exception:
+        pass
+    return 1920, 1080
+
+
+if not os.environ.get("RAZE_SCALE"):
+    # A forced scale is a debugging hatch and is taken as asked; anything
+    # else is shrunk to fit this screen - see _fit_scale.
+    S = _fit_scale(S, *_work_area())
+
 
 def px(value):
     """Design pixels -> device pixels."""
@@ -905,7 +961,10 @@ class BakedButton(ctk.CTkFrame):
                                 color=color, tracking=tracking)
         self.label.place(relx=0.5, rely=0.5, anchor="center")
         self.label.update_idletasks()
-        self.configure(width=self.label.winfo_reqwidth() + px(28), height=height)
+        # winfo_reqwidth is device px; CTk configure expects design px and
+        # scales it again - divide it back out or every button is S times
+        # too wide on a scaled display
+        self.configure(width=self.label.winfo_reqwidth() / S + 28, height=height)
         self._hover = hover
         self._rest_fill = fill
         self._rest_border = border
@@ -1279,6 +1338,11 @@ class AutoTyper:
         items, self._intro_items = self._intro_items, []
         try:
             if not items or reduce_motion_enabled():
+                # "fully formed" means at the final positions - the widgets
+                # were placed where the travel would have started them, so
+                # they have to be settled home before the intro stands down
+                for widget, x, y, _delay, _dx, _dy in items:
+                    self._move(widget, x, y)
                 self._intro_done = True
                 self.root.attributes("-alpha", 1.0)
                 self.root.after(120, self._align_nav)
@@ -1341,7 +1405,10 @@ class AutoTyper:
         labels = []
         total = 0
         for name, key in TABS:
-            width = self._tab_font.measure(name)
+            # the font is sized in device px, so the measurement comes back
+            # in device px; divide it out so every position below is in
+            # design px, the units _move/px() expect
+            width = self._tab_font.measure(name) / S
             item = BakedLabel(self.root, name, size=12, weight="Medium", color=MUTED,
                               height=24, cursor="hand2")
             item.bind("<Button-1>", lambda e, k=key: self.show(k))
@@ -1372,11 +1439,13 @@ class AutoTyper:
                                       size=10, weight="SemiBold", fill=TEXT,
                                       hover="#ffffff", color=INK, height=32)
         self.root.update_idletasks()
-        gw = self.github_btn.winfo_reqwidth()
+        # same unit rule as the tabs: these widgets report device px, the
+        # arithmetic below is design px
+        gw = self.github_btn.winfo_reqwidth() / S
         gx = WIN_W - MARGIN - gw
         self._anim(self.github_btn, gx, 18, delay=INTRO_STAGGER_MS * 1.5,
                    dy=INTRO_DROP)
-        sw = self.status_text.winfo_reqwidth()
+        sw = self.status_text.winfo_reqwidth() / S
         sx = gx - 40 - sw
         self._anim(self.status_text, sx, 20, delay=INTRO_STAGGER_MS * 1.5,
                    dy=INTRO_DROP)
@@ -1909,7 +1978,8 @@ class AutoTyper:
         pool.pack(fill="both", expand=True, padx=24)
 
         # a numbered rail on the left - one number per message
-        self.pool_gutter = ctk.CTkFrame(pool, fg_color="transparent", width=px(24))
+        # CTk constructor width is design px (scaled once by CTk itself)
+        self.pool_gutter = ctk.CTkFrame(pool, fg_color="transparent", width=24)
         self.pool_gutter.pack(side="left", fill="y")
         self.pool_gutter.pack_propagate(False)
         self._gutter_numbers = []
@@ -2023,7 +2093,7 @@ class AutoTyper:
                 corner_radius=px(5), border_width=2, border_color=BORDER_2,
                 fg_color=TEXT, hover_color="#c9c9d2", checkmark_color=BG,
                 command=self._toggle_random)
-            self.random_box.pack(side="left", padx=(0, px(9)))
+            self.random_box.pack(side="left", padx=(0, 9))
         except Exception:
             self.random_box = None
         self.random_word.pack(side="left")
@@ -2267,7 +2337,9 @@ class AutoTyper:
             rail_w = px(15 + 7 * digits)
             if rail_w != getattr(self, "_rail_width", 0):
                 self._rail_width = rail_w
-                self.pool_gutter.configure(width=rail_w)
+                # configure takes design px (CTk scales it); rail_w is
+                # device px, because the strip below is drawn in device px
+                self.pool_gutter.configure(width=15 + 7 * digits)
 
             # the lines that are actually on screen
             height = max(inner.winfo_height() - 2, 1)
@@ -2359,6 +2431,8 @@ class AutoTyper:
         except Exception:
             return False
         try:
+            # w/h are device px, for centring maths only; the geometry
+            # string must be in design px because CTkToplevel scales WxH
             w, h = px(452), px(178)
             dialog.withdraw()
             dialog.title(title)
@@ -2370,7 +2444,8 @@ class AutoTyper:
                 pass
 
             body = ctk.CTkFrame(dialog, fg_color="transparent")
-            body.pack(fill="both", expand=True, padx=px(26), pady=(px(22), px(20)))
+            # design px: CTk pack scales padx/pady by the widget scaling
+            body.pack(fill="both", expand=True, padx=26, pady=(22, 20))
 
             top = ctk.CTkFrame(body, fg_color="transparent")
             top.pack(fill="x")
@@ -2400,12 +2475,13 @@ class AutoTyper:
             Pill(row, cancel_text, lambda: close(False), kind="glass", height=36,
                  font=(FONT_SB, -12)).pack(side="right")
             Pill(row, confirm_text, lambda: close(True), kind=kind, height=36,
-                 font=(FONT_SB, -12)).pack(side="right", padx=(0, px(8)))
+                 font=(FONT_SB, -12)).pack(side="right", padx=(0, 8))
 
-            # centre it over the app
+            # centre it over the app; x/y are already device px and pass
+            # through CTk's geometry untouched, WxH must stay design px
             x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
             y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
-            dialog.geometry(f"{w}x{h}+{x}+{y}")
+            dialog.geometry(f"452x178+{x}+{y}")
             dialog.bind("<Escape>", lambda e: close(False))
             dialog.bind("<Return>", lambda e: close(True))
             dialog.transient(self.root)
@@ -2987,8 +3063,10 @@ class AutoTyper:
     def _fit_last_label(self, event=None):
         """Clip the last message into the panel so the row cannot grow."""
         try:
-            width = self.last_label.master.winfo_width() - px(2)
-            if width > px(40) and width != getattr(self, "_last_fit", 0):
+            # the box takes design px (text_photo scales it); winfo_width
+            # reports device px, so divide it back out
+            width = self.last_label.master.winfo_width() / S - 2
+            if width > 40 and width != getattr(self, "_last_fit", 0):
                 self._last_fit = width
                 self.last_label.set_box(max_width=width)
                 self.last_label.set_text(self._last_message or "—")
@@ -3021,10 +3099,11 @@ class AutoTyper:
             pass
 
     def _center_window(self):
-        sw = self.root.winfo_screenwidth()
-        sh = self.root.winfo_screenheight()
-        x = max(0, (sw - px(WIN_W)) // 2)
-        y = max(0, (sh - px(WIN_H)) // 2 - 20)
+        # the work area, not the raw screen: centering against the full
+        # display can push the bottom edge under the taskbar
+        aw, ah = _work_area()
+        x = max(0, (aw - px(WIN_W)) // 2)
+        y = max(0, (ah - px(WIN_H)) // 2 - 20)
         self.root.geometry(f"+{x}+{y}")
 
 

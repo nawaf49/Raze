@@ -591,6 +591,42 @@ def run():
     failures += not _check("a second copy is refused", refused is False,
                            str(refused))
 
+    print("display scale")
+    # _fit_scale is the whole resolution story in one pure function: the
+    # window is a fixed 1060x860, so on any screen with less room than that
+    # the scale has to come down or the bottom of the app is simply gone.
+    fit = A._fit_scale
+    s = fit(1.0, 1920, 1040)
+    failures += not _check("a 1080p screen keeps 100%", abs(s - 1.0) < 1e-9,
+                           f"{s:.4f}")
+    s = fit(1.5, 2560, 1400)
+    failures += not _check("a 1440p screen at 150% keeps its scale",
+                           abs(s - 1.5) < 1e-9, f"{s:.4f}")
+    s = fit(1.25, 1920, 1040)
+    failures += not _check("1080p at 125% is shrunk to fit", s < 1.25,
+                           f"{s:.4f}")
+    failures += not _check("...and the window it produces fits the width",
+                           A.WIN_W * s + A.FRAME_W <= 1920, f"{s:.4f}")
+    failures += not _check("...and the window it produces fits the height",
+                           A.WIN_H * s + A.FRAME_H <= 1040, f"{s:.4f}")
+    s = fit(1.0, 1366, 720)
+    failures += not _check("a 1366x768 laptop is shrunk to fit", s < 1.0,
+                           f"{s:.4f}")
+    failures += not _check("...and stays above the usability floor",
+                           s >= A.SCALE_MIN, f"{s:.4f}")
+    failures += not _check("...and the window it produces fits the height",
+                           A.WIN_H * s + A.FRAME_H <= 720, f"{s:.4f}")
+    s = fit(0.25, 320, 240)
+    failures += not _check("a screen smaller than the floor stops at the floor",
+                           abs(s - A.SCALE_MIN) < 1e-9, f"{s:.4f}")
+    s = fit(1.0, 0, 0)
+    failures += not _check("an unknown work area leaves the scale alone",
+                           abs(s - 1.0) < 1e-9, f"{s:.4f}")
+    # the clamp only ever shrinks, never enlarges a small display
+    s = fit(1.0, 3840, 2160)
+    failures += not _check("a 4K screen is not enlarged", abs(s - 1.0) < 1e-9,
+                           f"{s:.4f}")
+
     print("app data")
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["APPDATA"] = tmp
