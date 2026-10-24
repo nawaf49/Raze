@@ -101,6 +101,16 @@ INTRO_RISE = 18              # how far a card comes up from
 INTRO_DROP = -10             # how far the nav comes down from
 INTRO_FRAME_MS = 16          # ~60 fps
 
+# --- tab switching --------------------------------------------------------- #
+# The underline travels to the chosen tab while the view rises into place.
+# The switch itself happens first, so a click is always answered at once -
+# this is only the polish on top of it.  Windows' "turn off unnecessary
+# animations" is honoured the same way the opening sequence honours it.
+TAB_MOVE_MS = 170            # how long one trip takes
+TAB_RISE = 10                # how far the view comes up from
+TAB_FRAME_MS = 16            # ~60 fps
+TAB_WARM_MS = 1500           # when the off-screen tabs are built ahead
+
 # --- status pulse --------------------------------------------------------- #
 # The dot and the word breathe while the typer is running.  Every brightness
 # step is baked once, so running the animation costs one image swap per frame
@@ -1269,10 +1279,12 @@ class AutoTyper:
         items, self._intro_items = self._intro_items, []
         try:
             if not items or reduce_motion_enabled():
+                self._intro_done = True
                 self.root.attributes("-alpha", 1.0)
                 self.root.after(120, self._align_nav)
                 return
         except Exception:
+            self._intro_done = True
             return
         start = time.perf_counter()
 
@@ -1295,6 +1307,7 @@ class AutoTyper:
                 if live:
                     self.root.after(INTRO_FRAME_MS, step)
                 else:
+                    self._intro_done = True
                     self.root.attributes("-alpha", 1.0)
                     # everything has settled, so the nav can be lined up
                     # against its real, final positions
@@ -1347,7 +1360,8 @@ class AutoTyper:
                                        fg_color=TEXT)
         # parked under the tab that opens, so the travel lands on it exactly
         first_x0, first_x1 = self._tab_items[TABS[0][1]][1:]
-        self._anim(self._underline, (first_x0 + first_x1) // 2 - 12, 52,
+        self._underline_x = (first_x0 + first_x1) // 2 - 12
+        self._anim(self._underline, self._underline_x, 52,
                    delay=INTRO_STAGGER_MS * 0.75, dy=INTRO_DROP)
 
         # --- actions, far right
@@ -1462,7 +1476,12 @@ class AutoTyper:
         item.set_color(TEXT if on else MUTED)
 
     def show(self, key):
-        """Switch the visible view."""
+        """Switch the visible view, with a short slide into place.
+
+        The switch is made first - the view lifted, the tab marked - so a
+        click is always answered at once.  The travel is polish on top of
+        an already-done turn, never a wait in front of one.
+        """
         builder = self._pending_views.pop(key, None)
         if builder is not None:
             # the first time this tab is opened it is built right here
@@ -1471,11 +1490,11 @@ class AutoTyper:
             self._views[key] = view
         if key not in self._views:
             return
+        switching = key != self._tab
         self._tab = key
         for k, (item, x0, x1) in self._tab_items.items():
             item.set_color(TEXT if k == key else MUTED)
         mid = (self._tab_items[key][1] + self._tab_items[key][2]) // 2
-        self._underline.place(x=mid - 12, y=52)
         for k, view in self._views.items():
             if k == key:
                 view.lift()
@@ -1483,6 +1502,56 @@ class AutoTyper:
                 view.lower()
         if key == "history":
             self._refresh_history()
+        self._slide_tab(mid - 12, switching)
+
+    def _slide_tab(self, target, switching):
+        """Travel the underline to target while the view rises into place.
+
+        The guards here only ever leave the polish off, never the switch:
+        Windows' "turn off unnecessary animations" and the opening sequence
+        both get the settled positions directly, the latter because it owns
+        the underline until it has finished.  A trip already under way is
+        superseded - rapid clicks start the next travel from wherever the
+        last one reached, and the incoming view is raised from below the
+        offset either way, so it only ever appears while on its way in.
+        """
+        self._tab_anim = getattr(self, "_tab_anim", 0) + 1
+        view = self._views[self._tab]
+        try:
+            if (not switching or not getattr(self, "_intro_done", False)
+                    or reduce_motion_enabled()):
+                self._underline.place(x=target, y=52)
+                self._underline_x = target
+                self._move(view, 0, 0)
+                return
+        except Exception:
+            return
+        mine = self._tab_anim
+        start_x = self._underline_x
+        self._move(view, 0, TAB_RISE)
+        start = time.perf_counter()
+
+        def step():
+            try:
+                if self._tab_anim != mine:
+                    return                       # a later click took over
+                p = (time.perf_counter() - start) * 1000.0 / TAB_MOVE_MS
+                if p >= 1.0:
+                    p = 1.0
+                ease = 1.0 - (1.0 - p) ** 3       # ease out cubic
+                x = start_x + (target - start_x) * ease
+                self._underline.place(x=x, y=52)
+                self._underline_x = x
+                self._move(view, 0, TAB_RISE * (1.0 - ease))
+                if p < 1.0:
+                    self.root.after(TAB_FRAME_MS, step)
+                else:
+                    self._underline_x = target
+                    self._move(view, 0, 0)
+            except Exception:
+                pass                              # the window is gone
+
+        step()
 
     def _drag_start(self, event):
         self._drag_offset = (event.x_root - self.root.winfo_x(),
@@ -1522,8 +1591,10 @@ class AutoTyper:
         """A container that holds the tab views.
 
         Only the tab that opens is built here.  Hotkeys and History cost
-        about 110 ms between them, and most launches never show either, so
-        they are built the first time they are opened instead.
+        about 110 ms between them, and a first click on either used to pay
+        for that out of the click itself - which is exactly what a tab
+        switch felt like when it stuttered.  They are now built ahead on a
+        timer instead, while the interface is idle: see _warm_views.
         """
         self.content = ctk.CTkFrame(self.root, fg_color="transparent", width=WIN_W,
                                     height=WIN_H - NAV_H)
@@ -1534,6 +1605,28 @@ class AutoTyper:
         self._pending_views = {"hotkeys": self._build_hotkeys_view,
                                "history": self._build_history_view}
         self.show("typer")
+        # built while the app is idle, so opening either is instant
+        self.root.after(TAB_WARM_MS, self._warm_views)
+
+    def _warm_views(self):
+        """Build the tabs nobody is looking at, before they are clicked.
+
+        About 110 ms of work, one and a half seconds after start-up, when
+        the interface is otherwise doing nothing at all.  Each view goes
+        down under the one on screen, so the tab that is open never
+        flickers; lifting it stays show()'s job.
+        """
+        try:
+            for key in list(self._pending_views):
+                builder = self._pending_views.pop(key, None)
+                if builder is None:
+                    continue
+                view = builder()
+                view.place(x=0, y=0, relwidth=1, relheight=1)
+                self._views[key] = view
+                view.lower()
+        except Exception:
+            pass                                  # the window is gone
 
     def _place_in(self, parent, x, y, w, h, delay=None, dx=0.0, dy=0.0):
         """Place a frame at an exact pixel size (CTk forbids width/height in
@@ -2041,12 +2134,23 @@ class AutoTyper:
     def _load_config(self):
         return read_config()
 
+    def _stored_key(self, value, default):
+        """A hotkey as it sits in the config, or the default for its action.
+
+        Configs written while combinations were accepted may still hold one
+        of those; it no longer registers, so the default takes its place
+        and the action is never left with a key that refuses to arm.
+        """
+        key = hotkeymod.normalise(str(value or ""))
+        return key if hotkeymod.is_valid(key) else default
+
     def _apply_config(self):
         c = self.cfg
-        self.start_key = c.get("start_key", c.get("hotkey", "f8"))
-        self.stop_key = c.get("stop_key", "f9")
-        self.pause_key = c.get("pause_key", "f6")
-        self.resume_key = c.get("resume_key", "f7")
+        self.start_key = self._stored_key(c.get("start_key", c.get("hotkey", "f8")),
+                                          "f8")
+        self.stop_key = self._stored_key(c.get("stop_key", "f9"), "f9")
+        self.pause_key = self._stored_key(c.get("pause_key", "f6"), "f6")
+        self.resume_key = self._stored_key(c.get("resume_key", "f7"), "f7")
         self.char_delay = 0.0
         self.msg_interval = c.get("msg_interval", 2.0)
         self.countdown = 0.0
@@ -2382,7 +2486,7 @@ class AutoTyper:
         if not hotkeymod.is_valid(key):
             messagebox.showerror("Invalid hotkey",
                                  f"'{key}' is not a valid key.\n\n"
-                                 "Use a single key such as f8, or a combo such as ctrl+shift+f8.",
+                                 "Use a single key such as f8.",
                                  parent=self.root)
             return
         clash = self._others_own(key, "start")
@@ -2407,7 +2511,7 @@ class AutoTyper:
         if not hotkeymod.is_valid(key):
             messagebox.showerror("Invalid hotkey",
                                  f"'{key}' is not a valid key.\n\n"
-                                 "Use a single key such as f9, or a combo such as ctrl+shift+f9.",
+                                 "Use a single key such as f9.",
                                  parent=self.root)
             return
         clash = self._others_own(key, "stop")
@@ -2432,7 +2536,7 @@ class AutoTyper:
         if not hotkeymod.is_valid(key):
             messagebox.showerror("Invalid hotkey",
                                  f"'{key}' is not a valid key.\n\n"
-                                 "Use a single key such as f6, or a combo such as ctrl+shift+f6.",
+                                 "Use a single key such as f6.",
                                  parent=self.root)
             return
         clash = self._others_own(key, "pause")
@@ -2457,7 +2561,7 @@ class AutoTyper:
         if not hotkeymod.is_valid(key):
             messagebox.showerror("Invalid hotkey",
                                  f"'{key}' is not a valid key.\n\n"
-                                 "Use a single key such as f7, or a combo such as ctrl+shift+f7.",
+                                 "Use a single key such as f7.",
                                  parent=self.root)
             return
         clash = self._others_own(key, "resume")

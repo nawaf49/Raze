@@ -39,10 +39,13 @@ def run():
 
     failures = 0
     print("hotkeys")
-    failures += not _check("normalise", hotkeys.normalise(" Ctrl + Shift + F8 ") ==
-                           "ctrl+shift+f8")
+    failures += not _check("normalise", hotkeys.normalise(" F8 ") == "f8")
     failures += not _check("is_valid f8", hotkeys.is_valid("f8"))
-    failures += not _check("is_valid combo", hotkeys.is_valid("ctrl+shift+f8"))
+    failures += not _check("is_valid escape", hotkeys.is_valid("escape"))
+    failures += not _check("a combination is not valid",
+                           not hotkeys.is_valid("ctrl+shift+f8"))
+    failures += not _check("a bare modifier is not valid",
+                           not hotkeys.is_valid("shift"))
     failures += not _check("is_valid junk", not hotkeys.is_valid("ctrl+ctrl"))
     failures += not _check("is_valid empty", not hotkeys.is_valid("   "))
 
@@ -56,16 +59,18 @@ def run():
                            str(fired))
 
     fired.clear()
-    listener.set_hotkey("ctrl+shift+f8", lambda: fired.append("combo"))
+    armed = listener.set_hotkey("ctrl+shift+f8", lambda: fired.append("combo"))
     listener._on_press(_FakeKey("ctrl"))
     listener._on_press(_FakeKey("shift"))
     listener._on_press(_FakeKey("f8"))
-    failures += not _check("modifier combo fires", fired == ["combo"], str(fired))
+    failures += not _check("a combination never arms",
+                           armed is False and fired == [],
+                           "armed=%s fired=%s" % (armed, fired))
     fired.clear()
     listener._on_release(_FakeKey("ctrl"))
     listener._on_release(_FakeKey("shift"))
     listener._on_press(_FakeKey("f8"))
-    failures += not _check("plain key ignores held modifiers",
+    failures += not _check("plain key fires on its own",
                            fired == ["start"], str(fired))
     listener.remove_hotkey("f8")
     listener.remove_hotkey("f9")

@@ -18,6 +18,9 @@ from ctypes import wintypes
 user32 = ctypes.windll.user32
 user32.GetAsyncKeyState.restype = wintypes.SHORT
 
+# Combinations are not a feature - a hotkey is one key.  This set only
+# exists so a bare modifier is refused as one, and so the listener can tell
+# a modifier press apart from a key press.
 MODIFIERS = {"ctrl", "control", "alt", "shift", "cmd", "win", "super"}
 
 # --- virtual key codes for the polling fallback -------------------------- #
@@ -45,13 +48,13 @@ def normalise(name: str) -> str:
 
 
 def is_valid(hotkey: str) -> bool:
+    """One key, never a combination - combinations are not a feature."""
     parts = [p for p in normalise(hotkey).split("+") if p]
-    if not parts:
+    if len(parts) != 1:
         return False
-    keys = [p for p in parts if p not in MODIFIERS]
-    if len(keys) != 1:
+    key = parts[0]
+    if key in MODIFIERS:
         return False
-    key = keys[0]
     if key in VK:
         return True
     return len(key) == 1 and key.isalnum()
@@ -170,8 +173,8 @@ class HotkeyListener:
             keys = [p for p in parts if p not in MODIFIERS]
             if required and not all(m in self._pressed for m in required):
                 continue
-            # a plain key must not fire while a modifier is held, otherwise
-            # ctrl+shift+f8 would also trigger a plain f8 binding
+            # a plain key must not fire while a modifier is held, so
+            # holding one down for something else never trips a binding
             if not required and self._pressed:
                 continue
             if keys and name == keys[0]:

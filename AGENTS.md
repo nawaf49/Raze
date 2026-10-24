@@ -70,7 +70,7 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 66 headless checks, run via `Raze.exe --selftest` |
+| `selftest.py` | 69 headless checks, run via `Raze.exe --selftest` |
 | `pause_and_toast.py` | 27 checks: pause/resume/toast routing against a real window |
 | `layout_check.py` | 19 checks: the four keycaps and the hotkeys card, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
@@ -187,6 +187,33 @@ Pause is not a lighter stop. Its entire value is that it keeps the session.
 - The heartbeat's live-status block has to skip while paused. Pause
   deliberately leaves `typing` set, so that block would overwrite
   `Paused`/amber with `Typing`/green a few milliseconds later. It did.
+
+## Tabs
+
+Switching a tab must never wait. `show()` lifts the view and marks the
+label first; `_slide_tab` then travels the underline across (`mid - 12`
+under the chosen tab, tracked in `_underline_x`) and lets the view rise
+`TAB_RISE` 10 px into place over `TAB_MOVE_MS` 170 ms, ease-out cubic —
+polish on an already-done turn, so no click is ever delayed by it.
+
+- The stutter the user called choppy was the *first* click on Hotkeys or
+  History paying for their ~110 ms build out of the click itself. Both are
+  now built by `_warm_views`, `TAB_WARM_MS` 1.5 s after start-up while the
+  interface is idle, and tucked under the open view — `show()` still only
+  builds on demand if a click beats the timer.
+- `_tab_anim` is a token: every switch supersedes a travel in flight, so
+  rapid clicking starts each trip from wherever the last one reached, and
+  the view that wins is always raised *from* the offset (it is lowered
+  while it loses, so the snap is never seen). A losing view settles to
+  zero the next time it opens.
+- Two guards hand straight to the settled positions: Windows' "turn off
+  unnecessary animations" (`reduce_motion_enabled`) and the opening
+  sequence (`_intro_done`, set by `_play_intro` in every path), which owns
+  the underline until it finishes — otherwise both loops would write it.
+- The committed harnesses set the first guard, so `layout_check` only ever
+  sees final geometry. The travel itself was checked by a one-off in
+  `%TEMP%\opencode\tab_slide_check.py`, which stands the intro down
+  instead (alpha stays 0) and leaves motion on.
 
 ## Toast
 
@@ -342,17 +369,17 @@ open — the single-instance check reports honestly in both states.
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
 - **Exactly one release exists at a time.** When the next one ships, delete the
-  old: `gh release delete v1.4 --repo nawaf49/Raze --yes`. The user's rule — a
+  old: `gh release delete v1.5 --repo nawaf49/Raze --yes`. The user's rule — a
   visitor sees one clear download, never a menu of old versions. The private
-  repo's git log is the only remaining record of what v1.0–v1.3 contained.
-  **Current: v1.4.**
+  repo's git log is the only remaining record of what v1.0–v1.4 contained.
+  **Current: v1.5.**
 - Create it as a real release, not a draft; it becomes *Latest* on its own:
-  `gh release create v1.5 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
+  `gh release create v1.6 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
 - **Verify before publishing.** `Get-FileHash .\dist\Raze.exe -Algorithm SHA256`
   must equal the digest GitHub reports for the uploaded asset; the SHA256 that
   goes in the notes comes from that match, never from a build nobody re-checked.
-  (v1.4: `646303BFED1B0CA00E1340532F8CA92BF5BCC02DFDC937ED12D414385BAE79F0`
-  over 16,102,579 bytes, both sides confirmed identical.)
+  (v1.5: `128DE507F7937A149592F3F64589366A4B8B231600D1C65897E1F639926EF091`
+  over 16,107,751 bytes, both sides confirmed identical.)
 - **The notes format never changes** — same shape, same order, every time:
 
 ```text
@@ -378,7 +405,7 @@ and stops if you tab back in.
 ```
 
   Read the published one back with
-  `gh release view v1.4 --repo nawaf49/Raze --json body --jq .body`.
+  `gh release view v1.5 --repo nawaf49/Raze --json body --jq .body`.
 
 ## The public README
 
@@ -392,12 +419,17 @@ decisions — do not re-open one without asking:
   names its own subject — "Choose how many seconds pass between messages, and
   how many times **Raze** goes through the list" — rather than hanging off an
   implied one. All features stay listed; they just get short.
-- **No key combinations.** The user's word: "there are no key combinations".
-  Both READMEs and the release notes say only that the four keys are
-  changeable, never that a change can be a combination. The parser in
-  `hotkeys.py` does still accept `ctrl+shift+f8`, and the Hotkeys dialog's own
-  error text still offers it as an example — a cosmetic leftover that would
-  need a rebuild to remove. Do not re-advertise combinations anywhere.
+- **No key combinations.** The user's word: "there are no key combinations" —
+  said a second time to remove it as a feature, not only from the wording.
+  `hotkeys.is_valid` now rejects anything that is not exactly one key, so
+  `set_hotkey` refuses a combination and nothing can arm one;
+  `_apply_config` swaps a combination still sitting in an old config back to
+  that action's default key (`_stored_key`), so no action is ever left with
+  a key that will not register; and the Hotkeys dialog says only "Use a
+  single key such as f8." Neither README nor the release notes may
+  advertise a combination anywhere. `MODIFIERS` remains in `hotkeys.py` —
+  a bare `shift` must not pass for a hotkey, and the listener has to tell a
+  modifier press apart — which is not the feature.
 - **The title line is measured, not eyeballed:**
   `<h1 align="center"><img src="app_icon.png" width="43" align="top" alt=""> Raze</h1>`
   - `align="middle"` is wrong on GitHub: Blink maps it to
