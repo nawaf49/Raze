@@ -18,8 +18,6 @@ import customtkinter as ctk
 import AutoTyper as A
 
 A.reduce_motion_enabled = lambda: True
-# a test must never put anything on the user's Discord profile
-A.rpcmod.enabled = False
 
 failures = []
 typed = []          # what the worker believes it sent
@@ -61,6 +59,11 @@ def main():
     app._type_text = fake_type
     app._toast = lambda body, title="Raze": toasts.append((title, body))
     app.msg_interval = 0.15
+    # ...but the interval field is whole seconds, and _start()/_save_config()
+    # now flush it (_commit_fields), which would put the field's value back
+    # through _set_msg_interval. Drop the callback: only msg_interval itself
+    # is read by the run, and the harness needs it far below one second.
+    app.nf_interval._on_change = None
     # the first run has to survive on its own: the real config may well say
     # loop 1, which would end the run long before the pause ever lands
     app.nf_loop.set(0, call_change=False)
