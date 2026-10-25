@@ -17,8 +17,6 @@ import AutoTyper as A
 import capture_window as cw
 
 A.reduce_motion_enabled = lambda: True
-# a test must never put anything on the user's Discord profile
-A.rpcmod.enabled = False
 failures = []
 
 

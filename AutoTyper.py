@@ -30,7 +30,6 @@ from PIL import Image
 import pyperclip
 
 import hotkeys as hotkeymod
-import rpc as rpcmod
 
 
 # --------------------------------------------------------------------------- #
@@ -1167,10 +1166,6 @@ class AutoTyper:
         self.resume_key = "f7"
         self.messages = []
         self.stats = {"sent": 0, "chars": 0, "elapsed": 0.0}
-        # lifetime typing seconds, kept beside the session clock and stored in
-        # the config - the presence counts from this so its timer never starts
-        # over, however many sessions come and go
-        self._total_secs = 0.0
         self._next_deadline = None
         self._session_start = None
         self._last_message = ""
@@ -1186,9 +1181,6 @@ class AutoTyper:
         # on the Tk thread - the only thing that crosses between the two
         self._pause_requested = False
         self._resume_requested = False
-        # the status the presence thread works from, written on the Tk thread
-        # by _set_status and read by the heartbeat
-        self._rpc_status = "IDLE"
         self._history_dirty = False
         self._last_save = 0.0
         self._generation = 0
@@ -1214,10 +1206,6 @@ class AutoTyper:
 
         self._apply_config()
         self._register_hotkey()
-        # Discord presence: its own thread, exactly like the hotkey listener,
-        # and as silent as the toast when Discord is not running
-        self.presence = rpcmod.Presence()
-        self.presence.start()
         self._center_window()
         self._play_intro()
         self.root.after(150, self._tick)
@@ -1458,7 +1446,6 @@ class AutoTyper:
                    dy=INTRO_DROP)
 
     def _set_status(self, text, color):
-        self._rpc_status = text
         self.status_text.set_text(text)
         self.status_text.set_color(color)
         self.status_dot.set_color(color)
@@ -2264,12 +2251,6 @@ class AutoTyper:
             for stamp, _message in self.history:
                 day = stamp[:10]
                 self.daily[day] = self.daily.get(day, 0) + 1
-        # absent from any config written before the presence existed, which is
-        # fine - it simply starts at zero and grows from there
-        try:
-            self._total_secs = float(c.get("total_secs") or 0.0)
-        except Exception:
-            self._total_secs = 0.0
         msgs = c.get("messages") or ["Hello there!", "How can I help you?", "Have a great day!"]
         self.editor.insert("1.0", "\n".join(msgs))
         self._update_pool_meta()
@@ -2303,7 +2284,6 @@ class AutoTyper:
             "random": self._random_pick,
             "history": [{"t": t, "m": m} for t, m in self.history[-HISTORY_KEEP:]],
             "daily": self.daily,
-            "total_secs": round(self._total_secs, 3),
         })
         try:
             write_config(self.cfg)
@@ -3035,27 +3015,12 @@ class AutoTyper:
                                 % (sent, "" if sent == 1 else "s"))
 
         if self._session_start and (self.typing or self.arming):
-            elapsed = time.monotonic() - self._session_start
-            # the lifetime total moves by exactly what the session moved by,
-            # so nothing is counted twice and a pause costs it nothing - pause
-            # nulls _session_start, so this block does not even run then
-            self._total_secs += elapsed - self.stats["elapsed"]
-            self.stats["elapsed"] = elapsed
+            self.stats["elapsed"] = time.monotonic() - self._session_start
 
         self.tile_sent.set(str(self.stats["sent"]), GREEN if self.stats["sent"] else TEXT)
         self.tile_chars.set(str(self.stats["chars"]))
         mins, secs = divmod(int(self.stats["elapsed"]), 60)
         self.tile_time.set(f"{mins:02d}:{secs:02d}")
-
-        # Hand the presence thread its three values.  It decides on its own
-        # whether anything is worth pushing to Discord, so this stays cheap
-        # enough to run on every heartbeat tick.
-        try:
-            self.presence.set_state(self._rpc_status,
-                                    sum(self.daily.values()),
-                                    self._total_secs)
-        except Exception:
-            pass
 
         nxt = 0.0
         if self._next_deadline and self.typing:
@@ -3111,12 +3076,6 @@ class AutoTyper:
         # a notification still on screen would otherwise outlive the app
         try:
             notify_clear(getattr(self, "_raze_hwnd", 0))
-        except Exception:
-            pass
-        # and so would a presence: the profile must not go on showing a
-        # session that has ended
-        try:
-            self.presence.stop()
         except Exception:
             pass
         try:
