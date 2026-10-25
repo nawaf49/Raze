@@ -44,9 +44,6 @@ one at a time, pressing Enter after each one.
   and it stops if you click back into it.
 - The History tab shows how many messages you sent each day, plus a total
   for all time.
-- Your Discord profile shows Raze at work while it runs — whether it's typing
-  or paused, how long it has typed overall, a count of every message ever
-  sent, and a **Get Raze** button that brings people back here.
 - If Raze stops without you asking — the list ran out, typing failed, or you
   clicked back into Raze — you get a Windows notification. Not when you stop
   it yourself.
