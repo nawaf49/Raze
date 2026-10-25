@@ -41,24 +41,21 @@ GLOW_LOW = (200, 204, 225)      # rgba(200,204,225,.07) at 30% 74%
 
 FONT_DIR = os.path.join(ASSETS, "fonts")
 
-# weight name -> file.  "Display*" is Inter Display, the optical-size cut that
-# SF Pro Display uses for large type.  Only the faces Raze actually renders
-# with are listed - two unused InterDisplay cuts were dropped, because a
-# onefile build unpacks every bundled byte to disk on every launch, and a
-# weight that is not here falls back to Regular instead of crashing.
+# weight name -> file.  Geist has no optical-size cut, so the weight name is
+# the whole name.  Only the faces Raze actually renders with are listed,
+# because a onefile build unpacks every bundled byte to disk on every launch,
+# and a weight that is not here falls back to Regular instead of crashing.
 FONT_FILES = {
-    "Regular": "Inter-Regular.ttf",
-    "Medium": "Inter-Medium.ttf",
-    "SemiBold": "Inter-SemiBold.ttf",
-    "Bold": "Inter-Bold.ttf",
-    "DisplaySemiBold": "InterDisplay-SemiBold.ttf",
-    "DisplayBold": "InterDisplay-Bold.ttf",
-    "DisplayExtraBold": "InterDisplay-ExtraBold.ttf",
+    "Regular": "Geist-Regular.ttf",
+    "Medium": "Geist-Medium.ttf",
+    "SemiBold": "Geist-SemiBold.ttf",
+    "Bold": "Geist-Bold.ttf",
+    "ExtraBold": "Geist-ExtraBold.ttf",
 }
 
 
 def font(size, weight="Regular"):
-    path = os.path.join(FONT_DIR, FONT_FILES.get(weight, "Inter-Regular.ttf"))
+    path = os.path.join(FONT_DIR, FONT_FILES.get(weight, "Geist-Regular.ttf"))
     return ImageFont.truetype(path, size)
 
 HEADLINE_X, HEADLINE_Y = 44, 108
@@ -90,7 +87,7 @@ MESH = {"base": 266, "amp": 22, "freq": 1.45, "phase": 1.30, "half": 26, "step":
 
 
 def font(size, weight="Regular"):
-    path = os.path.join(FONT_DIR, FONT_FILES.get(weight, "Inter-Regular.ttf"))
+    path = os.path.join(FONT_DIR, FONT_FILES.get(weight, "Geist-Regular.ttf"))
     return ImageFont.truetype(path, size)
 
 

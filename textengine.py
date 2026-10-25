@@ -15,7 +15,7 @@ How this works
     text will be displayed at**, with the same hinting the OS uses.  Every
     stem therefore lands on whole pixels - the crispness of native text.
 2.  Small text gets *stem darkening*.  Below roughly 12 pixels a stem of
-    Inter is thinner than one pixel, so it smears across two of them and
+    Geist is thinner than one pixel, so it smears across two of them and
     turns into grey mush - measurably, only two pixels of a 9px line came
     out fully opaque.  The coverage of small type is therefore pushed
     towards solid, which is exactly what Windows does with its own stem
@@ -35,20 +35,19 @@ import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-# Only the faces the app renders with are listed.  Dropping the two unused
-# InterDisplay cuts keeps a missing file from silently rendering the wrong
-# weight - a request for a weight that is not here falls back to Regular.
+# Only the faces the app renders with are listed.  Geist has one optical size -
+# there is no separate display cut - so the weight name is the whole name.
+# Listing only real files keeps a missing file from silently rendering the
+# wrong weight: a request for a weight that is not here falls back to Regular.
 FONT_FILES = {
-    "Regular": "Inter-Regular.ttf",
-    "Medium": "Inter-Medium.ttf",
-    "SemiBold": "Inter-SemiBold.ttf",
-    "Bold": "Inter-Bold.ttf",
-    "DisplaySemiBold": "InterDisplay-SemiBold.ttf",
-    "DisplayBold": "InterDisplay-Bold.ttf",
-    "DisplayExtraBold": "InterDisplay-ExtraBold.ttf",
+    "Regular": "Geist-Regular.ttf",
+    "Medium": "Geist-Medium.ttf",
+    "SemiBold": "Geist-SemiBold.ttf",
+    "Bold": "Geist-Bold.ttf",
+    "ExtraBold": "Geist-ExtraBold.ttf",
 }
 
-# Below this size a stem of Inter is thinner than a pixel and needs to be
+# Below this size a stem of Geist is thinner than a pixel and needs to be
 # darkened, otherwise the text reads as grey mush instead of letters.
 SMALL_TEXT_MAX = 12
 # How hard the coverage of small type is pushed towards solid.
@@ -77,7 +76,7 @@ def font(font_dir, weight, px_size, path=None):
             file_path = os.path.join(font_dir,
                                      FONT_FILES.get(weight, FONT_FILES["Regular"]))
             if not os.path.exists(file_path):
-                file_path = os.path.join(font_dir, "Inter-Regular.ttf")
+                file_path = os.path.join(font_dir, "Geist-Regular.ttf")
         _font_cache[key] = ImageFont.truetype(file_path, max(1, int(px_size)))
     return _font_cache[key]
 

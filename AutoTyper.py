@@ -74,17 +74,17 @@ GREEN = "#22c55e"
 RED = "#ef4444"
 AMBER = "#f59e0b"
 
-FONT = "Inter"
-FONT_MED = "Inter Medium"
-FONT_SB = "Inter SemiBold"
+FONT = "Geist"
+FONT_MED = "Geist Medium"
+FONT_SB = "Geist SemiBold"
 FONT_MONO = "Cascadia Mono"
 
 # the font files that get registered at runtime.  Only the faces the app
-# actually renders with are shipped - two unused InterDisplay cuts cost real
-# time out of every launch, since a onefile exe unpacks all of it first.
-FONT_FILES = ("Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf",
-              "Inter-Bold.ttf", "InterDisplay-SemiBold.ttf",
-              "InterDisplay-Bold.ttf", "InterDisplay-ExtraBold.ttf")
+# actually renders with are shipped: every byte of this list is unpacked by a
+# onefile build on each launch.  The names match what Tk resolves - the medium
+# and semibold cuts carry their own family names ("Geist Medium").
+FONT_FILES = ("Geist-Regular.ttf", "Geist-Medium.ttf", "Geist-SemiBold.ttf",
+              "Geist-Bold.ttf", "Geist-ExtraBold.ttf")
 
 TITLE = "Raze"
 GITHUB_URL = "https://github.com/nawaf49/Raze"
@@ -159,7 +159,7 @@ def resource_path(name: str) -> str:
 
 
 def register_fonts():
-    """Register the bundled Inter family so Tk can use it."""
+    """Register the bundled Geist family so Tk can use it."""
     folder = os.path.join(os.path.dirname(resource_path("bg.png")), "fonts")
     ok = False
     for name in FONT_FILES:
@@ -729,7 +729,7 @@ def _mono_font_path():
     """A monospaced face for the log.
 
     Windows ships Cascadia Mono; Consolas is the fallback.  When neither is
-    present the log falls back to the bundled Inter.
+    present the log falls back to the bundled Geist.
     """
     global _MONO_PATH
     if _MONO_PATH is not None:
@@ -1383,7 +1383,7 @@ class AutoTyper:
         emblem = tk.Label(self.root, image=emblem_photo(34), bd=0, cursor="hand2",
                            highlightthickness=0, bg=BG)
         self._anim(emblem, MARGIN, 17, dy=INTRO_DROP)
-        wordmark = BakedLabel(self.root, "Raze", size=20, weight="DisplayExtraBold",
+        wordmark = BakedLabel(self.root, "Raze", size=20, weight="ExtraBold",
                               color=TEXT, tracking=-0.6, height=26, anchor="w", cursor="hand2")
         self._anim(wordmark, MARGIN + 44, 19, dy=INTRO_DROP)
 
@@ -1740,7 +1740,7 @@ class AutoTyper:
                                cursor="hand2")
             cap.pack(fill="x")
             cap.pack_propagate(False)
-            label = BakedLabel(cap, key.upper(), size=26, weight="DisplaySemiBold",
+            label = BakedLabel(cap, key.upper(), size=26, weight="SemiBold",
                                color=TEXT)
             label.place(relx=0.5, rely=0.5, anchor="center")
             BakedLabel(cell, caption, size=9, color=FAINT,
@@ -2457,7 +2457,7 @@ class AutoTyper:
                 mark.pack(side="left", padx=(0, px(12)))
             except Exception:
                 pass
-            BakedLabel(top, title, size=17, weight="DisplaySemiBold", color=TEXT,
+            BakedLabel(top, title, size=17, weight="SemiBold", color=TEXT,
                        height=26, anchor="w").pack(side="left")
 
             BakedLabel(body, message, size=12, color=MUTED, height=18,

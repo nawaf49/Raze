@@ -81,7 +81,7 @@ These are not preferences. Breaking one silently ruins the product.
 | `app_icon.png` | The dark tile; the public README title references it by this exact name |
 | `raze_emblem_src.png` | Source artwork the emblem is generated from |
 | `hooks/hook-PIL.Image.py` | Trims Pillow to the one codec we use. See *Build* |
-| `assets/` | Emblem, background, the 7 Inter faces, `raze.ico` |
+| `assets/` | Emblem, background, the 5 Geist faces + `OFL.txt`, `raze.ico` |
 
 ## The palette
 
@@ -151,7 +151,12 @@ down together, still sharp.
 - **Gotcha:** `BakedLabel` keeps its text in `self._text`. `cget("text")` will
   NOT reflect `set_text()`. Always read `_text` in tests.
 - The cache is capped. Do not let it grow unbounded — this app runs forever.
-- The font is Inter, 7 faces, bundled with `--add-data "assets;assets"`.
+- The font is Geist, 5 faces, bundled with `--add-data "assets;assets"` —
+  with `OFL.txt`, which the licence requires to travel with the font. Geist has
+  no display cut, so weights are `Regular`/`Medium`/`SemiBold`/`Bold`/
+  `ExtraBold` and nothing else. The medium and semibold files carry their own
+  family names (`Geist Medium`), which is what `FONT_MED`/`FONT_SB` resolve to
+  in Tk after `register_fonts()` loads them privately.
 
 ## Typing
 

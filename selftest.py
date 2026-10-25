@@ -80,7 +80,7 @@ def run():
     fonts = os.path.join(project, "assets", "fonts")
     if not os.path.isdir(fonts):
         fonts = os.path.join(project, "..", "assets", "fonts")
-    img = textengine.render("Raze", 20, fonts, weight="DisplayExtraBold",
+    img = textengine.render("Raze", 20, fonts, weight="ExtraBold",
                             color="#f6f6f8", tracking=-0.6)
     failures += not _check("renders an image", img.size[0] > 20 and img.size[1] > 8,
                            str(img.size))

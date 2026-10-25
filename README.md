@@ -78,5 +78,5 @@ opening a window.
 
 ## Credits
 
-Typeface: [Inter](https://rsms.me/inter/) by Rasmus Andersson (SIL Open Font
-License).
+Typeface: [Geist](https://github.com/vercel/geist-font) by Vercel, in
+collaboration with basement.studio (SIL Open Font License).

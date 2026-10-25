@@ -12,7 +12,7 @@ hiddenimports = [
     "PIL.PngImagePlugin",   # the only format the app ever opens
     "PIL.ImageTk",          # PhotoImage, for the baked text
     "PIL.ImageDraw",        # the text engine draws glyphs with this
-    "PIL.ImageFont",        # FreeType, for the bundled Inter faces
+    "PIL.ImageFont",        # FreeType, for the bundled Geist faces
     "PIL.ImageColor",
     "PIL.ImageMode",
     "PIL.ImageOps",
