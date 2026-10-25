@@ -2269,7 +2269,24 @@ class AutoTyper:
         self.editor.insert("1.0", "\n".join(msgs))
         self._update_pool_meta()
 
+    def _commit_fields(self):
+        """Read what is on screen, not what was there before the user typed.
+
+        NumberField keeps the entry's text and its own _value apart, and only
+        reconciles them on <Return> or <FocusOut>.  The four hotkeys are polled
+        globally and deliberately never steal focus, so a number typed into a
+        field and started with F8 fires neither one: the field shows 3 while
+        get() still answers 0, and 0 Loop means infinite.  Anything that reads
+        a field has to flush it first, or the value the user just typed is the
+        one value the app never sees.
+        """
+        for name in ("nf_interval", "nf_loop"):
+            nf = getattr(self, name, None)
+            if nf is not None:
+                nf._commit()
+
     def _save_config(self):
+        self._commit_fields()
         self.cfg.update({
             "msg_interval": self.nf_interval.get(),
             "loop": self.nf_loop.get(),
@@ -2729,6 +2746,10 @@ class AutoTyper:
         self._worker_error = None
         # snapshot the settings on the UI thread (Tk vars are not thread safe)
         self._auto_enter = True
+        # flush first: pressing F8 leaves focus in the Loop field, so the
+        # typed number has not been committed and get() would still answer
+        # with the old value
+        self._commit_fields()
         self.loop_count = int(self.nf_loop.get())
 
         self._set_status("TYPING", GREEN)
