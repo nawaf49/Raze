@@ -960,7 +960,12 @@ class BakedButton(ctk.CTkFrame):
         self.label = BakedLabel(self, text, size=size, weight=weight,
                                 color=color, tracking=tracking)
         self.label.place(relx=0.5, rely=0.5, anchor="center")
-        self.label.update_idletasks()
+        # No update_idletasks() here.  The label's requested width is already
+        # correct the moment its photo is configured - it matches the rendered
+        # image pixel for pixel - and a flush would instead drain every pending
+        # layout event in the whole app.  During _warm_views that pile is at
+        # its largest, so four pills alone cost ~130 ms and the opening
+        # interface visibly hitched.
         # winfo_reqwidth is device px; CTk configure expects design px and
         # scales it again - divide it back out or every button is S times
         # too wide on a scaled display
