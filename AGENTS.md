@@ -25,13 +25,15 @@ black, quiet, premium, no chrome. Everything else here is original.
   with `ConvertTo-Json` and a UTF8-without-BOM writer.
 - **The exe never enters git, in either repo.** It ships as a Release asset and
   is gitignored here.
-- **The public repo's history is a single commit**, `Raze`. It used to be a
-  dozen commits whose messages narrated their own changes — `simpler wording`,
-  `center the title`, `App icon for the README title`. The user's objection:
-  "people will say this is ai". It was squashed rather than edited one message
-  at a time because every message in there was the same species, then
-  force-pushed. Tags are separate refs, so the Release and its asset survived
-  untouched.
+- **The public repo's history is one squashed commit plus plain README edits.**
+  It used to be a dozen commits whose messages narrated their own changes —
+  `simpler wording`, `center the title`, `App icon for the README title`. The
+  user's objection: "people will say this is ai". It was squashed rather than
+  edited one message at a time because every message in there was the same
+  species, then force-pushed. Tags are separate refs, so the Release and its
+  asset survived untouched. An edit since then is one API commit carrying a
+  plain message (`README`); squashing it back to a single commit would mean
+  cloning the repo and force-pushing, which the user declined at v1.7.
 - The `README.md` in **this** repo is the developer-facing one: it carries
   *Build from source* and *Credits*, which the public one deliberately omits.
   They are not copies of each other. Fix drift by editing whichever is wrong —
@@ -350,17 +352,18 @@ open — the single-instance check reports honestly in both states.
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
 - **Exactly one release exists at a time.** When the next one ships, delete the
-  old: `gh release delete v1.6 --repo nawaf49/Raze --yes`. The user's rule — a
+  old: `gh release delete v1.7 --repo nawaf49/Raze --yes`. The user's rule — a
   visitor sees one clear download, never a menu of old versions. The private
-  repo's git log is the only remaining record of what v1.0–v1.5 contained.
-  **Current: v1.6.**
+  repo's git log is the only remaining record of what v1.0–v1.6 contained.
+  **Current: v1.7.**
 - Create it as a real release, not a draft; it becomes *Latest* on its own:
-  `gh release create v1.7 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
+  `gh release create v1.8 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
 - **Verify before publishing.** `Get-FileHash .\dist\Raze.exe -Algorithm SHA256`
   must equal the digest GitHub reports for the uploaded asset; the SHA256 that
   goes in the notes comes from that match, never from a build nobody re-checked.
-  (v1.6: `7125F6EAB1C4F5805AD77896D4559147D9426ED95E1A50EFC587A428230A59CB`
-  over 16,110,518 bytes, both sides confirmed identical.)
+  (v1.7: `F546299C3AD6574418647CF0C562C5F3960532F04D3295B9741F3A11A0A5DD30`
+  over 14,975,926 bytes; v1.6: `7125F6EAB1C4F5805AD77896D4559147D9426ED95E1A50EFC587A428230A59CB`
+  over 16,110,518 bytes — both sides confirmed identical.)
 - **The notes format never changes** — same shape, same order, every time:
 
 ```text
@@ -386,7 +389,7 @@ and stops if you tab back in.
 ```
 
   Read the published one back with
-  `gh release view v1.5 --repo nawaf49/Raze --json body --jq .body`.
+  `gh release view v1.7 --repo nawaf49/Raze --json body --jq .body`.
 
 ## The public README
 
