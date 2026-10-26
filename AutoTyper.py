@@ -908,6 +908,18 @@ class BakedLabel(tk.Label):
         self._color = color
         self._render()
 
+    def sync_bg(self):
+        """Re-resolve the background after an ancestor's fill changed.
+
+        The background is read once at build time, so a parent that changes
+        fill later (a pill lightening under the cursor) used to leave the old
+        colour painted behind the artwork - a visible dark box around the
+        text.  Call this whenever the parent's fill moves.
+        """
+        bg = resolve_bg(self.master)
+        if str(self.cget("bg")) != bg:
+            self.configure(bg=bg)
+
     def show_frame(self, frames, index):
         """Show one of a set of pre-rendered images.
 
@@ -982,11 +994,13 @@ class BakedButton(ctk.CTkFrame):
         self.configure(fg_color=self._hover)
         if self._hover_border is not None:
             self.configure(border_color=self._hover_border)
+        self.label.sync_bg()
 
     def _on_leave(self, _event=None):
         self.configure(fg_color=self._rest_fill)
         if self._rest_border is not None:
             self.configure(border_color=self._rest_border)
+        self.label.sync_bg()
 
     def _on_click(self, event):
         if self._command:

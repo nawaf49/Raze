@@ -76,6 +76,35 @@ def main():
             check("%s fits its frame" % attr, 0 < lw <= cw_,
                   "text %s in frame %s" % (lw, cw_))
 
+        # the artwork has to sit on the fill it is looking at: a hover that
+        # lightened the pill used to leave the rest colour painted behind the
+        # text, which read as a dark box around every button label
+        buttons = []
+
+        def collect(w):
+            for child in w.winfo_children():
+                if isinstance(child, A.BakedButton):
+                    buttons.append(child)
+                collect(child)
+
+        collect(root)
+        for b in buttons:
+            b._on_enter()
+        root.update_idletasks()
+        mismatched = [(b.label._text, b.label.cget("bg"), b.cget("fg_color"))
+                      for b in buttons
+                      if str(b.label.cget("bg")) != str(b.cget("fg_color"))]
+        check("every hovered button paints its label on the hover fill",
+              bool(buttons) and not mismatched, str(mismatched))
+        for b in buttons:
+            b._on_leave()
+        root.update_idletasks()
+        back = [(b.label._text, b.label.cget("bg"), b.cget("fg_color"))
+                for b in buttons
+                if str(b.label.cget("bg")) != str(b.cget("fg_color"))]
+        check("leaving a button puts its label back on the rest fill",
+              not back, str(back))
+
         root.after(200, capture_typer)
 
     def capture_typer():
