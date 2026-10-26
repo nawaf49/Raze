@@ -122,6 +122,8 @@ PULSE_STEPS = 10             # brightness levels between dim and full
 TICK_MS = 50
 # how often the log is written to disk (it only runs when something changed)
 SAVE_EVERY = 60.0
+# how often a notification Windows refused re-asks whether it may go out
+TOAST_RETRY_S = 2.0
 # how many recent messages are kept in the file
 HISTORY_KEEP = 200
 
@@ -590,6 +592,35 @@ def notify_clear(hwnd, uid=1):
         return bool(_shell32.Shell_NotifyIconW(_NIM_DELETE, ctypes.byref(nid)))
     except Exception:
         return False
+
+
+# The shell's own verdict on whether now is a time to interrupt.  A
+# full-screen game (QUNS_BUSY), a locked screen, quiet hours or presentation
+# settings make Explorer swallow a balloon while Shell_NotifyIcon still
+# answers TRUE - accepted, and then never shown.  That is exactly what
+# "notifications don't work" looked like from in here: Raze did its part and
+# Windows sat on it, so the message now waits for the screen to free up.
+_QUNS_ACCEPTS_NOTIFICATIONS = 5
+
+
+def _notification_state():
+    """The shell's current state, or None when it would not answer."""
+    try:
+        state = ctypes.c_int(0)
+        if _shell32.SHQueryUserNotificationState(ctypes.byref(state)):
+            return None
+        return int(state.value)
+    except Exception:
+        return None
+
+
+def notifications_allowed():
+    """True unless Windows is refusing banners right now.
+
+    None (no answer) counts as allowed: a notification must never be held
+    hostage by a query that failed.
+    """
+    return _notification_state() in (None, _QUNS_ACCEPTS_NOTIFICATIONS)
 
 
 _IMAGE_CACHE = {}
@@ -1197,6 +1228,12 @@ class AutoTyper:
         self._resume_requested = False
         self._history_dirty = False
         self._last_save = 0.0
+        # a notification Windows would not show yet, and the last time the
+        # heartbeat asked whether it may go out now
+        self._pending_toast = None
+        self._toast_retry = 0.0
+        # which loop the worker is on, read by the session card
+        self.passes = 0
         self._generation = 0
         self.daily = {}
         # the status pulse - its frames are baked once and then swapped,
@@ -2722,6 +2759,10 @@ class AutoTyper:
             # before the pool is read, or an empty one would pop a warning
             # for a key that was meant to do nothing at all
             return
+        # a new session supersedes any announcement still waiting for the
+        # screen to free up - it is about to be out of date
+        self._pending_toast = None
+        self.passes = 0
         self.messages = self._collect_messages()
         if not self.messages:
             messagebox.showwarning("No messages", "Add at least one message before starting.",
@@ -2966,9 +3007,37 @@ class AutoTyper:
                 hwnd = 0
         if not hwnd:
             return
+        if not notifications_allowed():
+            # Windows would only swallow it - a game owns the screen, or the
+            # session is locked.  Hold it; the heartbeat sends it the moment
+            # the screen frees up, instead of losing it quietly
+            self._pending_toast = (title, body)
+            self._toast_retry = time.monotonic()
+            return
+        self._fire_toast(hwnd, title, body)
+
+    def _fire_toast(self, hwnd, title, body):
+        self._pending_toast = None
         if notify_balloon(hwnd, title, body, resource_path("raze.ico")):
             # the entry would otherwise sit in the notification area forever
             self.root.after(7000, lambda h=hwnd: notify_clear(h))
+
+    def _retry_pending_toast(self):
+        """Send a held notification once Windows says it will show it."""
+        if not self._pending_toast:
+            return
+        now = time.monotonic()
+        if now - self._toast_retry < TOAST_RETRY_S:
+            return
+        self._toast_retry = now
+        if not notifications_allowed():
+            return
+        hwnd = getattr(self, "_raze_hwnd", 0)
+        if not hwnd:
+            self._pending_toast = None
+            return
+        title, body = self._pending_toast
+        self._fire_toast(hwnd, title, body)
 
     def _tick_inner(self):
         if self._start_requested:
@@ -3027,6 +3096,16 @@ class AutoTyper:
                     self._stop()
                     self._toast("Finished - %d message%s sent"
                                 % (sent, "" if sent == 1 else "s"))
+
+        # a message Windows refused while a game owned the screen is still
+        # owed to the user - it goes out as soon as the screen frees up
+        self._retry_pending_toast()
+
+        # where the run sits in the loop.  set_text is a no-op when the words
+        # have not changed, so this costs a string compare per tick
+        loop_label = getattr(self, "session_loop", None)
+        if loop_label is not None:
+            loop_label.set_text(self._loop_text())
 
         if self._session_start and (self.typing or self.arming):
             self.stats["elapsed"] = time.monotonic() - self._session_start

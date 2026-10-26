@@ -415,6 +415,11 @@ def run():
             self._history_dirty = False
             self._last_save = 0.0
             self._pulse_on = False
+            # the held notification and the loop the session card reads;
+            # both are touched by every heartbeat, so the stub carries them
+            self._pending_toast = None
+            self._toast_retry = 0.0
+            self.passes = 0
             self.stats = {"sent": 0, "chars": 0, "elapsed": 0.0}
             self.session_state = _State()
             self.tile_sent = _Tile()
@@ -441,6 +446,11 @@ def run():
 
         def _toast(self, *args):
             self.calls.append("toast")
+
+        def _retry_pending_toast(self):
+            # silent on purpose: the stub's calls are the contract the
+            # ordering checks above assert on, and this runs every tick
+            pass
 
         def _save_config(self):
             pass
@@ -519,6 +529,39 @@ def run():
     failures += not _check("a notification without a window never raises",
                            A.notify_balloon(0, "Raze", "body") is False
                            and A.notify_clear(0) is False, "zero handle")
+
+    # the shell answers whether now is a time to interrupt; a full-screen
+    # game (QUNS_BUSY) makes Explorer swallow a balloon that Shell_NotifyIcon
+    # still reports as accepted, so Raze holds the message and retries
+    failures += not _check("the notification state query is bound to shell32",
+                           hasattr(A._shell32, "SHQueryUserNotificationState"),
+                           "shell32")
+    real_state = A._notification_state
+    real_shell32 = A._shell32
+    try:
+        A._notification_state = lambda: 5      # QUNS_ACCEPTS_NOTIFICATIONS
+        accepted = A.notifications_allowed()
+        A._notification_state = lambda: 2      # QUNS_BUSY: a game owns the screen
+        blocked = A.notifications_allowed()
+    finally:
+        A._notification_state = real_state
+
+    class _NoAnswer:
+        def SHQueryUserNotificationState(self, _ptr):
+            raise OSError("shell would not answer")
+
+    A._shell32 = _NoAnswer()
+    try:
+        unanswered = A.notifications_allowed()
+    finally:
+        A._shell32 = real_shell32
+
+    failures += not _check("a free screen lets a notification through",
+                           accepted is True, str(accepted))
+    failures += not _check("a busy screen holds a notification back",
+                           blocked is False, str(blocked))
+    failures += not _check("a failed state query never holds a notification",
+                           unanswered is True, str(unanswered))
 
     print("config")
     with tempfile.TemporaryDirectory() as tmp:
