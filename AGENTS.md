@@ -72,9 +72,9 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 79 headless checks, run via `Raze.exe --selftest` |
-| `pause_and_toast.py` | 27 checks: pause/resume/toast routing against a real window |
-| `layout_check.py` | 22 checks: the window fits the work area, the four keycaps and the hotkeys card, captures both tabs |
+| `selftest.py` | 83 headless checks, run via `Raze.exe --selftest` |
+| `pause_and_toast.py` | 35 checks: pause/resume/toast routing, the loop counter and a held notification against a real window |
+| `layout_check.py` | 24 checks: the window fits the work area, the four keycaps, the hotkeys card and button hover backgrounds, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `build_assets.py` | Regenerates `assets/` artwork from source |
 | `make_shortcut.py` | Start Menu + Desktop shortcut "Raze" |
@@ -152,6 +152,12 @@ down together, still sharp.
 - **Why:** ClearType fringes. Rasterised art is crisp at any size.
 - **Gotcha:** `BakedLabel` keeps its text in `self._text`. `cget("text")` will
   NOT reflect `set_text()`. Always read `_text` in tests.
+- **The label's `bg` must always be the fill it is standing on.**
+  `BakedButton._on_enter` lightens the pill's `fg_color`, but the artwork keeps
+  the rest colour painted behind the glyphs — a stale rectangle that read as a
+  dark box around every button label on hover. `BakedLabel.sync_bg()` re-resolves
+  the background from the parent and is called from `_on_enter`/`_on_leave`;
+  `layout_check` asserts the label matches its fill in both states.
 - The cache is capped. Do not let it grow unbounded — this app runs forever.
 - The font is Geist, 5 faces, bundled with `--add-data "assets;assets"` —
   with `OFL.txt`, which the licence requires to travel with the font. Geist has
@@ -271,6 +277,16 @@ tabbed back in. **Never** on F9, pause, or resume — they already know why.
   `szInfoTitle` at 820. `selftest` asserts all three. Explorer rejects a wrong
   `cbSize` with `FALSE` rather than reading past it.
 - The tray entry is deleted 7 s later and on app close.
+- `SHQueryUserNotificationState` decides whether Windows will show a banner at
+  all. A full-screen game (VALORANT: `QUNS_BUSY`), a locked screen or quiet
+  hours make Explorer swallow a balloon while `Shell_NotifyIconW` still answers
+  TRUE — accepted, then never shown, which is exactly what "notifications don't
+  work" looked like. `_toast` therefore holds the message in `_pending_toast`
+  and `_retry_pending_toast`, called from every heartbeat, re-asks every
+  `TOAST_RETRY_S` (2 s) until the state is `QUNS_ACCEPTS_NOTIFICATIONS` (5).
+  A failed query counts as allowed: never hold a notification hostage to a
+  query that did not answer. `_start` clears any pending message — a new
+  session supersedes an announcement that is about to be out of date.
 
 ## Config
 
@@ -309,13 +325,18 @@ being verified.
   non-intrusive by construction: `send_enter`, `notify_balloon` and
   `is_foreground` are replaced with recorders, the window is built at alpha 0,
   and nothing is ever typed, surfaced or focused.
-  - `pause_and_toast.py` — 27 checks. Pause keeps the session, pause cannot
-    resume, start-while-paused does nothing, F9 is silent, and the two endings
-    the user did not choose do toast.
-  - `layout_check.py` — 22 checks. The window fits the work area's width and
+  - `pause_and_toast.py` — 35 checks. Pause keeps the session, pause cannot
+    resume, start-while-paused does nothing, F9 is silent, the two endings
+    the user did not choose do toast, the session header's loop counter reads
+    finite, infinite and clamped, and a notification Windows refused is held
+    and sent once the screen frees up. It reconfigures `sys.stdout` with
+    `errors="replace"`: the `∞` glyph cannot be encoded on a cp1252 console
+    and one raised `print` breaks the `after()` chain, stalling the harness.
+  - `layout_check.py` — 24 checks. The window fits the work area's width and
     height with its frame, the client area is the design at the clamped scale,
     the four keycaps read `F8`/`F6`/`F7`/`F9` and fit their frames, the hotkeys
-    card still fits its tab at 348 px, and it captures `typer.png` /
+    card still fits its tab at 348 px, every button's label sits on the fill it
+    is actually looking at (rest **and** hover), and it captures `typer.png` /
     `hotkeys.png` for the eye to check.
   - `capture_window.py` — the PrintWindow helper `layout_check.py` uses.
   Run them with `python <file>` from the project root; each prints

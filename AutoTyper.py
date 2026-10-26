@@ -2192,6 +2192,28 @@ class AutoTyper:
                          text_color=TEXT, height=18).pack(side="left")
         self.session_state = BakedLabel(head, "Ready", size=11, color=FAINT, height=18)
         self.session_state.pack(side="right")
+        # packed after the state, so it lands on its left: which loop the run
+        # is on, how many are left, or ∞ when Loop is 0 (keep going until you
+        # stop it).  The heartbeat rewrites it, and only when the words change
+        self.session_loop = BakedLabel(head, self._loop_text(), size=11,
+                                       color=MUTED, height=18)
+        self.session_loop.pack(side="right", padx=(0, 16))
+
+    def _loop_text(self):
+        """`Loop 2 of 5 · 3 left`, or `Loop 3 · ∞` when Loop is 0.
+
+        The worker counts completed passes in self.passes, so the current
+        loop is always the next one up; a finished run stays where it stopped
+        until the next start takes it back to one.
+        """
+        total = int(getattr(self, "loop_count", 0) or 0)
+        current = int(getattr(self, "passes", 0) or 0) + 1
+        if total > 0:
+            current = min(current, total)
+            left = total - current
+            return "Loop %d of %d%s" % (current, total,
+                                        " \u00b7 %d left" % left if left else "")
+        return "Loop %d \u221e" % current
 
         body = ctk.CTkFrame(card, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=24, pady=(0, 20))
@@ -2888,6 +2910,7 @@ class AutoTyper:
         passes = 0
         index = 0
         counted = 0
+        self.passes = 0
 
         try:
             while not self.stop_event.is_set():
@@ -2941,6 +2964,9 @@ class AutoTyper:
                 if counted >= len(order):
                     counted = 0
                     passes += 1
+                    # published for the session card, which reads it on the
+                    # Tk thread - a plain int assignment is all it takes
+                    self.passes = passes
                     if loop_count and passes >= loop_count:
                         break
         except Exception as e:

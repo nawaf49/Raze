@@ -19,9 +19,18 @@ import AutoTyper as A
 
 A.reduce_motion_enabled = lambda: True
 
+# the loop counter legitimately reads "Loop 3 ∞", and a cp1252 console
+# cannot encode it - one raised print would break the callback chain and
+# stall the whole harness
+try:
+    sys.stdout.reconfigure(errors="replace")
+except Exception:
+    pass
+
 failures = []
 typed = []          # what the worker believes it sent
 toasts = []         # what _toast asked Windows to show
+balloons = []       # what reached notify_balloon itself
 
 
 def check(label, ok, detail=""):
@@ -219,6 +228,74 @@ def main():
               str(toasts))
         check("the status still explains the stop",
               app.status_text._text == "TAB OUT", app.status_text._text)
+
+        root.after(200, loop_counter)
+
+    # ---------------------------------------------------------------- #
+    #  the loop counter on the session card
+    # ---------------------------------------------------------------- #
+    def loop_counter():
+        check("the session card carries a loop counter",
+              getattr(app, "session_loop", None) is not None,
+              getattr(app, "session_loop", None))
+        app.passes = 2
+        app.loop_count = 0
+        root.after(150, verify_infinite)
+
+    def verify_infinite():
+        check("an endless run reads the current loop and ∞",
+              app.session_loop._text == "Loop 3 \u221e",
+              app.session_loop._text)
+        app.loop_count = 5
+        root.after(150, verify_finite)
+
+    def verify_finite():
+        check("a counted run reads current, total and how many are left",
+              app.session_loop._text == "Loop 3 of 5 \u00b7 2 left",
+              app.session_loop._text)
+        # a run that has finished is clamped to its last loop rather than
+        # counting one past the end
+        app.loop_count = 1
+        app.passes = 5
+        root.after(150, verify_clamped)
+
+    def verify_clamped():
+        check("the counter never reads past the last loop",
+              app.session_loop._text == "Loop 1 of 1",
+              app.session_loop._text)
+        app.passes = 0
+        app.loop_count = 0
+        root.after(150, held_toast)
+
+    # ---------------------------------------------------------------- #
+    #  a notification Windows refuses is held, then sent when it frees up
+    # ---------------------------------------------------------------- #
+    def held_toast():
+        A.notify_balloon = lambda *a, **k: balloons.append(a) or True
+        # Windows answers the way it does while a full-screen game is up
+        A.notifications_allowed = lambda: False
+        del balloons[:]
+        app._pending_toast = None
+        app._toast_retry = 0.0
+        # the routing tests above replaced _toast with a recorder; this one
+        # is about the real thing, so it is called directly
+        A.AutoTyper._toast(app, "Finished - 1 message sent")
+        check("a screen Windows will not notify on holds the message",
+              app._pending_toast == ("Raze", "Finished - 1 message sent")
+              and balloons == [],
+              str((app._pending_toast, balloons)))
+        # the screen frees up, and the heartbeat is what sends it
+        A.notifications_allowed = lambda: True
+        app._toast_retry = 0.0
+        root.after(300, verify_held_sent)
+
+    def verify_held_sent():
+        check("the held message goes out once the screen is free",
+              len(balloons) == 1 and balloons[0][1] == "Raze"
+              and balloons[0][2] == "Finished - 1 message sent",
+              str(balloons))
+        check("and nothing is left waiting",
+              app._pending_toast is None, str(app._pending_toast))
 
         root.after(200, done)
 
