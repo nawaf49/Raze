@@ -110,6 +110,19 @@ TAB_RISE = 10                # how far the view comes up from
 TAB_FRAME_MS = 16            # ~60 fps
 TAB_WARM_MS = 1500           # when the off-screen tabs are built ahead
 
+# --- coming back from a minimise -------------------------------------------
+# Showing the window again repaints every child window it owns, and Windows
+# puts that on the screen as it finishes - the interface assembling itself
+# piece by piece, which is what "loads choppy on tab-back" was.  So the window
+# is held at alpha 0 while the work is paid for: a poll every RESTORE_POLL_MS
+# asks Tk for everything it still owes, and two polls under RESTORE_QUIET_MS
+# in a row mean the paint has actually stopped.  RESTORE_MAX_MS caps how long
+# the window may stay invisible, whatever a pathological restore does.
+RESTORE_POLL_MS = 50
+RESTORE_QUIET_MS = 8
+RESTORE_QUIET_NEEDED = 2
+RESTORE_MAX_MS = 1500
+
 # --- status pulse --------------------------------------------------------- #
 # The dot and the word breathe while the typer is running.  Every brightness
 # step is baked once, so running the animation costs one image swap per frame
@@ -1199,6 +1212,14 @@ class AutoTyper:
 
         self._intro_items = []
 
+        # a restore repaints the whole app at once - see _on_map
+        self._restore_drain = False
+        self._restore_quiet = 0
+        self._restore_polls = 0
+        self._restore_started = 0.0
+        self.root.bind("<Map>", self._on_map)
+        self.root.bind("<Unmap>", self._on_unmap)
+
         self._drag_offset = (0, 0)
         self.typing = False
         self.arming = False
@@ -1674,7 +1695,87 @@ class AutoTyper:
                            f"{event.y_root - self._drag_offset[1]}")
 
     def _minimize(self):
+        self._restore_drain = True       # the next map is a restore of ours
         self.root.withdraw()
+
+    def _on_unmap(self, event=None):
+        """Note that this window has gone away, so the next map is a restore.
+
+        Armed by the event rather than by the two callers (_launch and
+        _minimize) because the user can also minimise the window himself, and
+        that repaint costs exactly the same.  Descendants unmap on their own
+        all the time - only the toplevel leaving the screen counts.
+        """
+        if event is not None and event.widget is not self.root:
+            return
+        try:
+            self._restore_drain = True
+        except Exception:
+            pass
+
+    def _on_map(self, event=None):
+        """Hold the window back until a restore has finished painting.
+
+        root.bind is on the toplevel's path, and Tk puts that tag on every
+        descendant as well, so only the toplevel's own map counts - and only
+        one we caused ourselves: _launch and _minimize are the two places this
+        window ever goes away.
+
+        A harness keeps the window at alpha 0, so an invisible window is never
+        touched either: it has nothing to hide and nothing to show.
+        """
+        if event is not None and event.widget is not self.root:
+            return
+        if not self._restore_drain or not getattr(self, "_intro_done", False):
+            return
+        try:
+            if float(self.root.attributes("-alpha") or 0.0) <= 0.001:
+                return
+            self.root.attributes("-alpha", 0.0)
+        except Exception:
+            return                                  # the window is gone
+        self._restore_drain = False
+        self._restore_quiet = 0
+        self._restore_polls = 0
+        self._restore_started = time.perf_counter()
+        try:
+            self.root.after(RESTORE_POLL_MS, self._restore_poll)
+        except Exception:
+            pass
+
+    def _restore_poll(self):
+        """Ask Tk for everything it still owes the window, then show it.
+
+        One root.update() pays the whole repaint while the window is still at
+        alpha 0, so nothing of it reaches the screen; the reveal happens when
+        two polls in a row come back under RESTORE_QUIET_MS, which means the
+        work has genuinely stopped rather than merely paused between two
+        bursts.  The time cap is the other half of the promise: a restore can
+        be slow, but it may never leave the window invisible for long.
+        """
+        try:
+            if self.root.state() in ("iconic", "withdrawn"):
+                # minimised again mid-drain - leave it dark and re-arm, so the
+                # next restore runs this from the top
+                self._restore_drain = True
+                return
+            self._restore_polls += 1
+            t = time.perf_counter()
+            self.root.update()
+            ms = (time.perf_counter() - t) * 1000.0
+            self._restore_quiet = (0 if ms >= RESTORE_QUIET_MS
+                                   else self._restore_quiet + 1)
+            spent = (time.perf_counter() - self._restore_started) * 1000.0
+            if (self._restore_quiet >= RESTORE_QUIET_NEEDED
+                    or spent >= RESTORE_MAX_MS):
+                self.root.attributes("-alpha", 1.0)
+                return
+            self.root.after(RESTORE_POLL_MS, self._restore_poll)
+        except Exception:
+            try:
+                self.root.attributes("-alpha", 1.0)
+            except Exception:
+                pass                                  # the window is gone
 
     def _quit(self):
         self.stop_event.set()
@@ -2826,6 +2927,7 @@ class AutoTyper:
         taskbar entry and can be brought back with one click.
         """
         self.arming = False
+        self._restore_drain = True       # the next map is a restore of ours
         try:
             self.root.iconify()
         except Exception:

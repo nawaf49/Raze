@@ -264,6 +264,49 @@ polish on an already-done turn, so no click is ever delayed by it.
   `%TEMP%\opencode\tab_slide_check.py`, which stands the intro down
   instead (alpha stays 0) and leaves motion on.
 
+## Restore
+
+Bringing the window back after a minimise (F8's `_launch`, the minimise
+button, or the user's own Win+Down) used to look like it "loads choppy on
+tab-back": showing the window repaints ~120 child windows at once, and
+Windows presents that work to the screen as it finishes — the interface
+assembling itself piece by piece. Measured on a real restore: 150–490 ms of
+stalls spread over the first half second.
+
+- **A plain exposure is not the storm.** Tabbing away and back without
+  minimising repaints the whole client in under 8 ms — measured with an
+  explicit `InvalidateRect`, which raised no stalls at all. Only the
+  *map/restore* path pays, which is why the fix hangs off `<Map>` and not off
+  focus.
+- **The fix is a drain, not a redesign.** `_on_map` (bound in `__init__`)
+  drops the window to alpha 0, then `_restore_poll` calls `root.update()`
+  every `RESTORE_POLL_MS` (50 ms) and asks Tk for everything it still owes.
+  Two polls back under `RESTORE_QUIET_MS` (8 ms) mean the paint has actually
+  stopped, and only then is alpha put back to 1.0. The repaint happens while
+  nobody can see it, so the window appears complete instead of in pieces.
+  `RESTORE_MAX_MS` (1500 ms) caps the invisible period whatever a
+  pathological restore does. Result: **0 ms of stall after the reveal** on
+  every run, against 150–490 ms before.
+- **The guards matter more than the drain.** `<Map>` on the root fires for
+  every descendant too (the tag is inherited), so `_on_map` returns unless
+  `event.widget is self.root`. It also returns unless `_restore_drain` is set
+  — armed by `<Unmap>` (`_on_unmap`) and explicitly in `_launch`/`_minimize`
+  — and unless `_intro_done`, which owns the window during the opening
+  sequence. **The alpha read is the test guard**: a harness keeps the window
+  at alpha 0, so `_on_map` refuses to touch it and no suite can ever surface a
+  window or run a drain.
+- The cost is *per child window and its content*, not our own Python: 120
+  plain `tk.Frame`s repaint in ~70 ms, the same 120 as CTk frames in ~198 ms,
+  and the real window in ~187 ms; roughly half the drain's wall time is
+  process CPU and half is waiting on Windows. A rebuild in plain Tk would buy
+  ~130 ms and cost the whole look — not worth it. One-off probes for all of
+  this are in `%TEMP%\opencode` (`minimize_probe.py`, `adaptive_drain.py`,
+  `paint_compare.py`, `ship_check.py`, …).
+- `_restore_poll` runs from an `after` and calls `root.update()`, which
+  re-enters the loop — schedule the *next* poll only after `update()` returns,
+  never from inside it. A probe that did `after(0)` + `update()` recursed
+  until the interpreter died.
+
 ## Toast
 
 Shown only for endings the user did not choose: pool ran out, worker error,
