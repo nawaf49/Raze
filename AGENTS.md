@@ -377,6 +377,12 @@ open — the single-instance check reports honestly in both states.
   visitor sees one clear download, never a menu of old versions. The private
   repo's git log is the only remaining record of what v1.0–v1.7 contained.
   **Current: v1.8.**
+- **Exactly one *tag* too.** Deleting the release leaves its tag behind, and
+  the Tags page would still advertise old versions:
+  `gh api -X DELETE repos/nawaf49/Raze/git/refs/tags/v1.8`. Check with
+  `gh api repos/nawaf49/Raze/tags --jq ".[].name"` — only the current one may
+  answer. Never touch the current tag: it is what the release hangs on.
+  (Public repo tags are pruned this way, so the Tags page shows one entry.)
 - Create it as a real release, not a draft; it becomes *Latest* on its own:
   `gh release create v1.9 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
 - **Verify before publishing.** `Get-FileHash .\dist\Raze.exe -Algorithm SHA256`
