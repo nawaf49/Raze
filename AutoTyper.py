@@ -936,6 +936,8 @@ class BakedLabel(tk.Label):
         self._mono = mono
         self._min_width = min_width
         self._max_width = max_width
+        # whether the caller pinned a height at build time (already px()d)
+        self._fixed_height = bool(kwargs.get("height"))
         self._photo = None
         self._text = None
         self.set_text(text)
@@ -982,6 +984,15 @@ class BakedLabel(tk.Label):
                                   self._min_width, self._max_width)
         self._photo = photo
         self.configure(image=photo, text="")
+        if self._fixed_height:
+            # A box shorter than its own artwork cuts the glyphs.  The box is
+            # design px converted once at build time, but the rendered photo
+            # is font metrics at the rounded device size, so below ~100%
+            # scale the two stop matching (height 7 for a 9 px photo at
+            # S=0.5).  The floor keeps a pinned height a *minimum*: rows are
+            # sized by their content, so a pinned box still cannot move.
+            if int(self.cget("height")) < photo.height():
+                self.configure(height=photo.height())
 
     def set_box(self, min_width=None, max_width=None):
         """Pin the label to a fixed box so its content cannot move anything."""
@@ -998,6 +1009,37 @@ class BakedLabel(tk.Label):
             if kwargs.get(key) is not None:
                 kwargs[key] = px(kwargs[key])
         return super().place(**kwargs)
+
+    @staticmethod
+    def _pad(kwargs):
+        """Rewrite geometry padding from design px to device px.
+
+        CTkBaseClass.pack/grid run their arguments through
+        _apply_argument_scaling, so a CTk child's padx/pady is scaled for
+        free; a plain tk child never sees that call.  Left alone, a
+        `padx=14` here stays 14 *device* px while the artwork around it
+        shrinks with S - which is exactly what cut the tile captions on a
+        clamped laptop screen (92 px tile - 28 px padding = 64 px of room
+        for 73 px of text at S=0.78).
+        """
+        kwargs = dict(kwargs)
+        for key in ("padx", "pady", "ipadx", "ipady"):
+            v = kwargs.get(key)
+            if v is None:
+                continue
+            if isinstance(v, (tuple, list)):
+                kwargs[key] = tuple(px(i) for i in v)
+            elif isinstance(v, (int, float)):
+                kwargs[key] = px(v)
+        return kwargs
+
+    def pack(self, **kwargs):
+        """Pack with padding written in design px - see _pad()."""
+        return super().pack(**self._pad(kwargs))
+
+    def grid(self, **kwargs):
+        """Grid with padding written in design px - see _pad()."""
+        return super().grid(**self._pad(kwargs))
 
 
 class BakedButton(ctk.CTkFrame):
@@ -1169,6 +1211,9 @@ class NumberField(ctk.CTkFrame):
 
 
 class StatTile(ctk.CTkFrame):
+    # design px of room either side of the caption and the value
+    PAD = 14
+
     def __init__(self, master, caption, width=None, **kwargs):
         super().__init__(master, fg_color=SURFACE_2, corner_radius=14,
                          border_width=1, border_color=BORDER, **kwargs)
@@ -1177,15 +1222,26 @@ class StatTile(ctk.CTkFrame):
         self.grid_rowconfigure(3, weight=1)      # bottom spacer
         cap = BakedLabel(self, caption, size=9, weight="SemiBold", color=FAINT,
                          tracking=1.1, height=14, anchor="w")
-        cap.grid(row=1, column=0, sticky="w", padx=14)
+        cap.grid(row=1, column=0, sticky="w", padx=self.PAD)
         # the tile has a fixed width, so a counter going from 9 to 10 cannot
         # move a single pixel - the value stays left aligned under its caption
         self.value = BakedLabel(self, "0", size=21, weight="SemiBold", color=TEXT,
                                 anchor="w", height=28)
-        self.value.grid(row=2, column=0, sticky="w", padx=14, pady=(2, 0))
+        self.value.grid(row=2, column=0, sticky="w", padx=self.PAD, pady=(2, 0))
         if width:
-            self.configure(width=width)
+            # The caption is already rendered, so the room it needs is known
+            # exactly for *this* scale.  Its design width grows below ~60%
+            # scale (the font is round(size*S) and the tracking round(1.1*S),
+            # neither of which shrinks in step with S), so the box takes the
+            # wider of the design width and what this scale's artwork needs.
+            # It is computed once, at build time: a running counter still
+            # cannot move it.
+            room = max(width, cap.winfo_reqwidth() / S + 2 * self.PAD + 2)
+            self.configure(width=room)
             self.grid_propagate(False)
+            # and a value that outgrows the box (7 digits and up) is
+            # ellipsized by its own label rather than cut by the tile
+            self.value.set_box(max_width=room - 2 * self.PAD)
 
     def set(self, text, color=None):
         self.value.set_text(text)
@@ -1585,15 +1641,28 @@ class AutoTyper:
         except Exception:
             self._pulse_on = False
 
-    def _align_nav(self):
+    def _align_nav(self, tries=0):
         """Put the status on exactly the same line as the GitHub button.
 
         The window has to be mapped before the real positions are known, so
-        this runs once the layout has settled.
+        this runs once the layout has settled - and if it beats the first
+        map of the button's own label it is *not* settled yet: an unmapped
+        widget reports rooty 0, so 0 - rooty would park the status above the
+        window.  Retry until the pair is actually on screen.
         """
         try:
             bl = self.github_btn.label
+            if not (self.root.winfo_ismapped() and bl.winfo_ismapped()):
+                if tries < 30:
+                    self.root.after(100, lambda: self._align_nav(tries + 1))
+                return
             by = bl.winfo_rooty() - self.root.winfo_rooty()
+            # device px: rooty diffs are device px and place_configure is a
+            # raw tk call, which is exactly the unit it wants
+            if not 0 <= by < self.root.winfo_height():
+                if tries < 30:
+                    self.root.after(100, lambda: self._align_nav(tries + 1))
+                return
             text_h = self.status_text.winfo_reqheight()
             dot_h = self.status_dot.winfo_reqheight()
             self.status_text.place_configure(y=by)
@@ -1618,8 +1687,8 @@ class AutoTyper:
         builder = self._pending_views.pop(key, None)
         if builder is not None:
             # the first time this tab is opened it is built right here
+            # (its builder has already _place_in'd it at the design size)
             view = builder()
-            view.place(x=0, y=0, relwidth=1, relheight=1)
             self._views[key] = view
         if key not in self._views:
             return
@@ -1814,7 +1883,6 @@ class AutoTyper:
         self.content.place(x=0, y=NAV_H)
 
         self._views["typer"] = self._build_typer_view()
-        self._views["typer"].place(x=0, y=0, relwidth=1, relheight=1)
         self._pending_views = {"hotkeys": self._build_hotkeys_view,
                                "history": self._build_history_view}
         self.show("typer")
@@ -1834,8 +1902,7 @@ class AutoTyper:
                 builder = self._pending_views.pop(key, None)
                 if builder is None:
                     continue
-                view = builder()
-                view.place(x=0, y=0, relwidth=1, relheight=1)
+                view = builder()          # the builder _place_in's it
                 self._views[key] = view
                 view.lower()
         except Exception:
@@ -2194,11 +2261,15 @@ class AutoTyper:
                  unit=None, width=104, last=False):
             wrap = ctk.CTkFrame(parent, fg_color="transparent")
             wrap.pack(fill="x", pady=(0, 0 if last else 24))
-            top = ctk.CTkFrame(wrap, fg_color="transparent", height=18)
-            top.pack(fill="x")
-            top.pack_propagate(False)
+            top = ctk.CTkFrame(wrap, fg_color="transparent")
+            # the row is not pinned: it takes its height from the label, so
+            # below ~70% scale - where the glyphs are taller in design px
+            # than the 18 they measure at 100% - the row grows instead of
+            # cutting them.  At 100% the label is pinned to 18 anyway, so
+            # the spinner below lands on exactly the line it always did.
             BakedLabel(top, label, size=11, color=MUTED,
-                        height=18, anchor="w").pack(side="left")
+                       height=18, anchor="w").pack(side="left")
+            top.pack(fill="x")
             nf = NumberField(wrap, value=value, minimum=0, step=step,
                              decimals=decimals, on_change=setter, width=width)
             nf.pack(fill="x", pady=(11, 0))
@@ -2251,6 +2322,25 @@ class AutoTyper:
                 except Exception:
                     pass
         row.bind("<Button-1>", _flip)
+
+        # The stack measures exactly the card's height at 100% - there is
+        # no slack anywhere in it - and the baked artwork outgrows its own
+        # design box below ~60% scale (font metrics round up, and the pad
+        # around the glyphs is device px), so pack would clamp the Random
+        # row off its own line.  The card's margins are where the give is:
+        # 46 design px of rhythm, none of it load-bearing, against 18 px of
+        # gap below the card.  pack_configure is a raw tk call - CTk scales
+        # only the pack() it overrides - so these values are device px, and
+        # the floors keep the rhythm legible whatever the shortfall.
+        # Req heights read as a placeholder (200 apiece) until the first
+        # idle pass has laid the children out, so settle the stack first.
+        self.root.update_idletasks()
+        over = (head.winfo_reqheight() + body.winfo_reqheight()
+                + px(26 + 10 + 20) - px(CONFIG_H))
+        if over > 0:
+            give = over / 2.0
+            head.pack_configure(pady=(max(px(8), px(26) - give), px(10)))
+            body.pack_configure(pady=(0, max(px(8), px(20) - give)))
 
     def _set_random_word(self):
         word = getattr(self, "random_word", None)
@@ -2635,7 +2725,7 @@ class AutoTyper:
                        height=26, anchor="w").pack(side="left")
 
             BakedLabel(body, message, size=12, color=MUTED, height=18,
-                       anchor="w").pack(fill="x", pady=(px(12), 0))
+                       anchor="w").pack(fill="x", pady=(12, 0))
 
             row = ctk.CTkFrame(body, fg_color="transparent")
             row.pack(fill="x", side="bottom")

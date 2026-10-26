@@ -127,9 +127,17 @@ down together, still sharp.
   the taskbar.
 - **The device/design pixel rule.** Everything written in the code is design
   px; `px()` converts once, at the boundary. Two boundaries exist:
-  - **plain tk widgets** (`tk.Frame`, `tk.Label`, `BakedLabel`, and every
-    raw `self.root.tk.call("place", …)`) are NOT scaled by customtkinter —
+  - **plain tk widgets** (`tk.Frame`, `tk.Label`, and every raw
+    `self.root.tk.call("place", …)`) are NOT scaled by customtkinter —
     pass them `px(...)` device px.
+  - **`BakedLabel` scales its own geometry.** `place` x/y and the
+    `padx/pady/ipadx/ipady` of `pack`/`grid` are rewritten through `px()`
+    inside the class, mirroring CTk's `_apply_argument_scaling` — pass
+    them **design px, never `px()`**. CTk does this scaling only for its
+    own widgets, so before the override a plain tk child handed CTk-style
+    design-px padding got device px instead: `cap.grid(padx=14)` was 14
+    *device* px at every scale while the artwork around it shrank, which
+    is what cut the tile captions on a clamped laptop screen.
   - **CTk widgets** scale their own `configure(width=…)`, `place` x/y and
     `pack`/`grid` padx/pady by `S` — pass them **design px, never
     `px()`**. A `px()` inside a CTk pack doubles the offset at 150%.
@@ -139,10 +147,36 @@ down together, still sharp.
     value feeds design-px arithmetic (nav layout, tab centres), divide it
     by `S` first. `winfo_rootx/y()` diffs are device px and belong on raw
     tk `place_configure` calls as-is.
+  - **`winfo_reqheight()` reads a placeholder (200) until the first idle
+    pass has laid a widget's children out.** Measuring a stack at build
+    time without a `root.update_idletasks()` first reports nonsense — the
+    config card's give-back did, and quietly floored itself. Ask after
+    settling, not before.
 - The opening animation places widgets at their travel start (`x+dx, y+dy`)
   and settles them in `_play_intro`. Its reduce-motion branch must settle
   them too, or users with "turn off unnecessary animations" on get a
   permanently 10–18 px offset interface.
+- `_align_nav` puts `● IDLE` on the GitHub button's line by reading
+  `winfo_rooty()` — but an **unmapped** widget reports 0, so a run that beat
+  the first map computed `0 - rooty` and parked the status above the window
+  where nothing could see it. It therefore retries (100 ms, at most 30
+  times) until the root *and* the button's own label are mapped and the
+  offset lands inside the window.
+- **A tab view is placed exactly once, by its builder's `_place_in`.**
+  `show()`, `_warm_views` and `_build_content` must not add a
+  `place(relwidth=1, relheight=1)` on top of it: Tk *adds* `width` to
+  `relwidth × parent`, so the redundant call doubled every view to
+  2120x1584 — twice the container — and the audit saw the whole stack
+  hanging outside the client.
+- **The scale audit.** `%TEMP%\opencode\res_audit.py <scale> [tab]` builds
+  the app at a forced scale and reports glyph boxes taller than their room
+  plus every mapped widget outside the client, per tab. Sweep 0.50–1.20
+  across `typer`/`hotkeys`/`history` and require `RESULT: CLEAN` on all 42
+  lines after any layout change. (Above ~1.2 on this 1080p machine is a
+  probe artifact: `RAZE_SCALE` bypasses the clamp and the screen cannot
+  hold the window. `cfg_stack.py` beside it dumps the config card's
+  vertical stack; `cap_width.py` measures the worst-case design width of a
+  fixed-box string at every scale.)
 
 ## Baked text
 
@@ -152,6 +186,22 @@ down together, still sharp.
 - **Why:** ClearType fringes. Rasterised art is crisp at any size.
 - **Gotcha:** `BakedLabel` keeps its text in `self._text`. `cget("text")` will
   NOT reflect `set_text()`. Always read `_text` in tests.
+- **A pinned `height=` is a floor, not a box.** `_render()` raises it to
+  `photo.height()` whenever the artwork is taller: the box is design px
+  converted once at build, but the photo is font metrics at the *rounded*
+  device size, and the two stop matching below ~100% (a 7 px box for a 9 px
+  photo at `S=0.5`). Rows are sized by their content, so a floored label
+  still cannot move anything — but a container pinned *around* one can clip
+  it, which is why the config card's label rows propagate their height and
+  the card gives back padding instead of squeezing (see *Config*).
+- **A tile sizes itself from its own caption, once, at build.** `StatTile`
+  takes `room = max(width, cap.winfo_reqwidth()/S + 2*PAD + 2)` and pins
+  that, so a running counter can never move it; the value gets
+  `set_box(max_width=room - 2*PAD)` so a 7-digit counter ellipsizes instead
+  of clipping. The measurement matters because a caption's **design** width
+  peaks *below* 100%: the font is `round(size*S)` and the tracking
+  `round(1.1*S)`, neither of which shrinks in step with `S` — `MESSAGES
+  SENT` wants 109.8 design px at `S=0.51` against 89 at `S=1.0`.
 - **The label's `bg` must always be the fill it is standing on.**
   `BakedButton._on_enter` lightens the pill's `fg_color`, but the artwork keeps
   the rest colour painted behind the glyphs — a stale rectangle that read as a
@@ -344,6 +394,18 @@ tabbed back in. **Never** on F9, pause, or resume — they already know why.
   `Set-Content -Encoding UTF8` on it, PS 5.1 writes one and breaks the parser.
 - `read_config` defaults deliberately omit `history`/`daily`. Never filter a
   config down to known keys or you will delete the user's history on save.
+- **The configuration *card* has no slack.** Its stack — two field rows, the
+  rule, the Random row — measures exactly `CONFIG_H = 336` at 100%, and the
+  artwork outgrows its design box below ~60% scale (rounded font metrics,
+  device-px glyph pad), so pack clamps the last slave: 16 design px of
+  overflow at `S=0.5`, landing on `Random`/`Disabled`. The card gives it
+  back from its own margins — half off the header's top padding, half off
+  the body's bottom, each floored at 8 — measured after an
+  `update_idletasks()` from what the stack actually asks for. Growing the
+  card was never an option: only 18 design px separate it from the
+  hotkeys card below, and 16 of them would have closed the gap to 2.
+  The field's label row is likewise not pinned; it takes its height from
+  the label, so the spinner below never sits on top of grown glyphs.
 
 ## Testing protocol
 
