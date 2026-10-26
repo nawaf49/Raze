@@ -373,18 +373,20 @@ open — the single-instance check reports honestly in both states.
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
 - **Exactly one release exists at a time.** When the next one ships, delete the
-  old: `gh release delete v1.7 --repo nawaf49/Raze --yes`. The user's rule — a
+  old: `gh release delete v1.8 --repo nawaf49/Raze --yes`. The user's rule — a
   visitor sees one clear download, never a menu of old versions. The private
-  repo's git log is the only remaining record of what v1.0–v1.6 contained.
-  **Current: v1.7.**
+  repo's git log is the only remaining record of what v1.0–v1.7 contained.
+  **Current: v1.8.**
 - Create it as a real release, not a draft; it becomes *Latest* on its own:
-  `gh release create v1.8 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
+  `gh release create v1.9 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
 - **Verify before publishing.** `Get-FileHash .\dist\Raze.exe -Algorithm SHA256`
   must equal the digest GitHub reports for the uploaded asset; the SHA256 that
   goes in the notes comes from that match, never from a build nobody re-checked.
-  (v1.7: `F546299C3AD6574418647CF0C562C5F3960532F04D3295B9741F3A11A0A5DD30`
-  over 14,975,926 bytes; v1.6: `7125F6EAB1C4F5805AD77896D4559147D9426ED95E1A50EFC587A428230A59CB`
-  over 16,110,518 bytes — both sides confirmed identical.)
+  Both sides are read back after publishing — `gh release view <tag>
+  --json assets --jq ".assets[].digest"`.
+  (v1.8: `DE203AE80D8C4AE1FD8A6D1FEE10C77A5618736152AE383A7F61049425D2E06C`
+  over 14,978,521 bytes; v1.7: `F546299C3AD6574418647CF0C562C5F3960532F04D3295B9741F3A11A0A5DD30`
+  over 14,975,926 bytes — both sides confirmed identical.)
 - **The notes format never changes** — same shape, same order, every time:
 
 ```text
@@ -410,7 +412,7 @@ and stops if you tab back in.
 ```
 
   Read the published one back with
-  `gh release view v1.7 --repo nawaf49/Raze --json body --jq .body`.
+  `gh release view v1.8 --repo nawaf49/Raze --json body --jq .body`.
 
 ## The public README
 
