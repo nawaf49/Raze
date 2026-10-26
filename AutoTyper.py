@@ -2199,22 +2199,6 @@ class AutoTyper:
                                        color=MUTED, height=18)
         self.session_loop.pack(side="right", padx=(0, 16))
 
-    def _loop_text(self):
-        """`Loop 2 of 5 · 3 left`, or `Loop 3 · ∞` when Loop is 0.
-
-        The worker counts completed passes in self.passes, so the current
-        loop is always the next one up; a finished run stays where it stopped
-        until the next start takes it back to one.
-        """
-        total = int(getattr(self, "loop_count", 0) or 0)
-        current = int(getattr(self, "passes", 0) or 0) + 1
-        if total > 0:
-            current = min(current, total)
-            left = total - current
-            return "Loop %d of %d%s" % (current, total,
-                                        " \u00b7 %d left" % left if left else "")
-        return "Loop %d \u221e" % current
-
         body = ctk.CTkFrame(card, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=24, pady=(0, 20))
         # only the preview may grow - the four counters keep a fixed width so
@@ -2246,6 +2230,22 @@ class AutoTyper:
                                      color=MUTED, anchor="w", height=20)
         self.last_label.pack(fill="x", pady=(8, 0))
         preview.bind("<Configure>", self._fit_last_label)
+
+    def _loop_text(self):
+        """`Loop 2 of 5 · 3 left`, or `Loop 3 · ∞` when Loop is 0.
+
+        The worker counts completed passes in self.passes, so the current
+        loop is always the next one up; a finished run stays where it stopped
+        until the next start takes it back to one.
+        """
+        total = int(getattr(self, "loop_count", 0) or 0)
+        current = int(getattr(self, "passes", 0) or 0) + 1
+        if total > 0:
+            current = min(current, total)
+            left = total - current
+            return "Loop %d of %d%s" % (current, total,
+                                        " \u00b7 %d left" % left if left else "")
+        return "Loop %d \u221e" % current
 
     # ------------------------------------------------------------------ #
     #  Sliders

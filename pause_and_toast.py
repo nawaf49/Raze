@@ -81,6 +81,28 @@ def main():
     app.editor.insert("1.0", "one\ntwo")
 
     # ---------------------------------------------------------------- #
+    #  the session card has to be the whole card
+    # ---------------------------------------------------------------- #
+    # An orphaned block once dropped the card's body out of the build: the
+    # four counters and the LAST SENT box were sitting unreachable after a
+    # return in another method, and every other suite stayed green because
+    # the heartbeat swallows the AttributeError that follows.  So the boxes
+    # are asserted by name, here, where a missing one cannot hide.
+    tiles = [getattr(app, n, None) for n in
+             ("tile_sent", "tile_chars", "tile_time", "tile_next")]
+    check("the session card carries its four counters",
+          all(t is not None for t in tiles) and all(t.master is not None for t in tiles),
+          [None if t is None else t.master for t in tiles])
+    check("and the LAST SENT box",
+          getattr(app, "last_label", None) is not None
+          and app.last_label.master is not None,
+          getattr(app, "last_label", None))
+    check("and the loop counter beside the state",
+          getattr(app, "session_loop", None) is not None
+          and app.session_loop.master is not None,
+          getattr(app, "session_loop", None))
+
+    # ---------------------------------------------------------------- #
     #  pause: the clock and the counters have to survive the stop
     # ---------------------------------------------------------------- #
     def start():

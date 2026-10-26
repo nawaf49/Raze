@@ -73,7 +73,7 @@ These are not preferences. Breaking one silently ruins the product.
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
 | `selftest.py` | 83 headless checks, run via `Raze.exe --selftest` |
-| `pause_and_toast.py` | 35 checks: pause/resume/toast routing, the loop counter and a held notification against a real window |
+| `pause_and_toast.py` | 38 checks: pause/resume/toast routing, the session card's contents, the loop counter and a held notification against a real window |
 | `layout_check.py` | 24 checks: the window fits the work area, the four keycaps, the hotkeys card and button hover backgrounds, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `build_assets.py` | Regenerates `assets/` artwork from source |
@@ -325,7 +325,12 @@ being verified.
   non-intrusive by construction: `send_enter`, `notify_balloon` and
   `is_foreground` are replaced with recorders, the window is built at alpha 0,
   and nothing is ever typed, surfaced or focused.
-  - `pause_and_toast.py` — 35 checks. Pause keeps the session, pause cannot
+  - `pause_and_toast.py` — 38 checks. The session card carries its four
+    counters, the `LAST SENT` box and the loop counter (an orphaned block once
+    left the card's body unreachable after a `return`, and every other suite
+    stayed green because the heartbeat swallows the `AttributeError` that
+    follows — so the boxes are asserted by name), then pause keeps the
+    session, pause cannot
     resume, start-while-paused does nothing, F9 is silent, the two endings
     the user did not choose do toast, the session header's loop counter reads
     finite, infinite and clamped, and a notification Windows refused is held
