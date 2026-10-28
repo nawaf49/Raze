@@ -48,6 +48,13 @@ one at a time, pressing Enter after each one.
   clicked back into Raze — you get a Windows notification. Not when you stop
   it yourself.
 
+## Screen sizes
+
+Raze fits itself to your screen: it shrinks or grows the whole window to
+match what your display can show, so nothing gets cut off at the edges. It
+works on screens from 800x600 up to 4K, at 100%, 125% and 150% Windows
+scaling. Anything smaller than 800x600 may not fit.
+
 ## Your data
 
 Everything is saved on your own computer, in `%APPDATA%\Raze` — a folder in
