@@ -28,6 +28,17 @@ know why that one happened.
 Grab `Raze.exe` and run it. It is a single, self-contained file - no folders,
 no runtime, no dependencies.
 
+## Screen sizes
+
+Raze measures the screen it opens on and scales the whole window to fit it.
+One factor drives everything - window, cards, text, borders - so nothing is
+cut off at the edges and nothing is left bigger than its box.
+
+Verified across the usual Windows modes, from `800x600` up to `3840x2160`
+(4K), at 100%, 125% and 150% display scaling. Below `800x600` the window
+stops shrinking (it would be unusable), so very old or tiny modes may not
+fit.
+
 ## Where your data lives
 
 Raze stores its settings and history **in your own user profile**, never next

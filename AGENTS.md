@@ -168,6 +168,12 @@ down together, still sharp.
   `relwidth × parent`, so the redundant call doubled every view to
   2120x1584 — twice the container — and the audit saw the whole stack
   hanging outside the client.
+- **The fit path is itself verified across real screen modes**, not only by
+  the forced-scale sweep: 21 modes from `800x600` to `3840x2160@150%`, three
+  tabs each, all through the shipped auto-fit (`%TEMP%\opencode\fit_probe.py`
+  fakes the work area and DPI). It must also re-point Tk's `wm maxsize` at the
+  faked screen, or a fake 4K run gets clamped to this machine's 1080p panel
+  and reports overflow that no real machine would ever see.
 - **The scale audit.** `%TEMP%\opencode\res_audit.py <scale> [tab]` builds
   the app at a forced scale and reports glyph boxes taller than their room
   plus every mapped widget outside the client, per tab. Sweep 0.50–1.20
