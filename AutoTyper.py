@@ -1250,6 +1250,36 @@ class StatTile(ctk.CTkFrame):
 
 
 # --------------------------------------------------------------------------- #
+#  Session counters
+# --------------------------------------------------------------------------- #
+def _elapsed_text(seconds):
+    """The session clock in a form that cannot outgrow its tile.
+
+    It used to be `mm:ss`, which is exact and unbounded: minutes never stop
+    climbing, so a day and a half printed `2098:47`, and a year in it wanted
+    `525600:00` - nine characters in a five digit box, ellipsized down to
+    `5256…`.  Each step below trades the precision you no longer need for
+    the digits you do: `mm:ss` under an hour, then hours, days, years.  The
+    longest string it can produce is nine characters.
+    """
+    t = max(0, int(seconds or 0))
+    if t < 3600:
+        return "%02d:%02d" % divmod(t, 60)
+    if t < 86400:
+        return "%dh %02dm" % (t // 3600, (t % 3600) // 60)
+    if t < 86400 * 365:
+        return "%dd %dh" % (t // 86400, (t % 86400) // 3600)
+    return "%dy %dd" % (t // (86400 * 365), (t % (86400 * 365)) // 86400)
+
+
+def _next_text(seconds):
+    """Whole seconds until the next message: `95s`, never `94.7s`."""
+    if not seconds:
+        return "--"
+    return "%ds" % math.ceil(seconds)
+
+
+# --------------------------------------------------------------------------- #
 #  Application
 # --------------------------------------------------------------------------- #
 class AutoTyper:
@@ -2384,10 +2414,11 @@ class AutoTyper:
         self.session_state = BakedLabel(head, "Ready", size=11, color=FAINT, height=18)
         self.session_state.pack(side="right")
         # packed after the state, so it lands on its left: which loop the run
-        # is on, how many are left, or ∞ when Loop is 0 (keep going until you
-        # stop it).  The heartbeat rewrites it, and only when the words change
+        # is on, separated from how many times it repeats - `/` and the
+        # infinity sign in gold, the rest of the label gold with them.  The
+        # heartbeat rewrites it, and only when the words change
         self.session_loop = BakedLabel(head, self._loop_text(), size=11,
-                                       color=MUTED, height=18)
+                                       color=AMBER, height=18)
         self.session_loop.pack(side="right", padx=(0, 16))
 
         body = ctk.CTkFrame(card, fg_color="transparent")
@@ -2401,7 +2432,7 @@ class AutoTyper:
         self.tile_sent.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         self.tile_chars = StatTile(body, "CHARACTERS", width=104)
         self.tile_chars.grid(row=0, column=1, sticky="nsew", padx=8)
-        self.tile_time = StatTile(body, "ELAPSED", width=100)
+        self.tile_time = StatTile(body, "ELAPSED", width=118)
         self.tile_time.grid(row=0, column=2, sticky="nsew", padx=8)
         self.tile_next = StatTile(body, "NEXT IN", width=92)
         self.tile_next.grid(row=0, column=3, sticky="nsew", padx=(8, 20))
@@ -2423,7 +2454,7 @@ class AutoTyper:
         preview.bind("<Configure>", self._fit_last_label)
 
     def _loop_text(self):
-        """`Loop 2 of 5 · 3 left`, or `Loop 3 · ∞` when Loop is 0.
+        """`Loop 2 of 5 / 3 left`, or `Loop 3 / ∞` when Loop is 0.
 
         The worker counts completed passes in self.passes, so the current
         loop is always the next one up; a finished run stays where it stopped
@@ -2435,8 +2466,8 @@ class AutoTyper:
             current = min(current, total)
             left = total - current
             return "Loop %d of %d%s" % (current, total,
-                                        " \u00b7 %d left" % left if left else "")
-        return "Loop %d \u221e" % current
+                                        " / %d left" % left if left else "")
+        return "Loop %d / ∞" % current
 
     # ------------------------------------------------------------------ #
     #  Sliders
@@ -3330,13 +3361,12 @@ class AutoTyper:
 
         self.tile_sent.set(str(self.stats["sent"]), GREEN if self.stats["sent"] else TEXT)
         self.tile_chars.set(str(self.stats["chars"]))
-        mins, secs = divmod(int(self.stats["elapsed"]), 60)
-        self.tile_time.set(f"{mins:02d}:{secs:02d}")
+        self.tile_time.set(_elapsed_text(self.stats["elapsed"]))
 
         nxt = 0.0
         if self._next_deadline and self.typing:
             nxt = max(0.0, self._next_deadline - time.monotonic())
-        self.tile_next.set(f"{nxt:.1f}s" if nxt else "--", TEXT if nxt else FAINT)
+        self.tile_next.set(_next_text(nxt), TEXT if nxt else FAINT)
 
         # live session status.  A pause deliberately leaves typing set - the
         # run still exists, it is only suspended - so this has to step aside

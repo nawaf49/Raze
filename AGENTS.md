@@ -72,7 +72,7 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 83 headless checks, run via `Raze.exe --selftest` |
+| `selftest.py` | 90 headless checks, run via `Raze.exe --selftest` |
 | `pause_and_toast.py` | 38 checks: pause/resume/toast routing, the session card's contents, the loop counter and a held notification against a real window |
 | `layout_check.py` | 24 checks: the window fits the work area, the four keycaps, the hotkeys card and button hover backgrounds, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
@@ -100,7 +100,7 @@ BORDER    #1e1e23
 BORDER_2  #2c2c33
 BLUE      #2f6bff
 GREEN     #22c55e   typing state only
-AMBER     #f59e0b   warnings and refusals only
+AMBER     #f59e0b   warnings, refusals, and the session loop counter
 ```
 
 Layout constants: window `1060x860`, nav `68` high, content from `y=96`.

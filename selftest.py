@@ -107,6 +107,30 @@ def run():
     failures += not _check("pretty date fallback",
                            A.pretty_day("nonsense") == "nonsense")
 
+    print("session clock")
+    # the two counters the session card shows, both of which used to be able
+    # to outgrow their tile: the clock printed unbounded mm:ss (nine
+    # characters a year in, in a five digit box) and the countdown printed
+    # a decimal
+    failures += not _check("elapsed under an hour reads mm:ss",
+                           A._elapsed_text(87) == "01:27", A._elapsed_text(87))
+    failures += not _check("elapsed over an hour reads hours",
+                           A._elapsed_text(3661) == "1h 01m",
+                           A._elapsed_text(3661))
+    failures += not _check("elapsed over a day reads days",
+                           A._elapsed_text(90000) == "1d 1h",
+                           A._elapsed_text(90000))
+    failures += not _check("elapsed over a year reads years",
+                           A._elapsed_text(86400 * 400) == "1y 35d",
+                           A._elapsed_text(86400 * 400))
+    three_years = A._elapsed_text(86400 * 365 * 3)
+    failures += not _check("years of seconds still fit the tile",
+                           len(three_years) <= 9, three_years)
+    failures += not _check("the countdown is whole seconds",
+                           A._next_text(94.7) == "95s", A._next_text(94.7))
+    failures += not _check("no countdown pending reads --",
+                           A._next_text(0) == "--", A._next_text(0))
+
     print("hotkey ownership")
     # four actions, four owners - a collision check that forgot one of them
     # would quietly let the last setter take a key over

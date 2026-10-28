@@ -266,14 +266,14 @@ def main():
 
     def verify_infinite():
         check("an endless run reads the current loop and ∞",
-              app.session_loop._text == "Loop 3 \u221e",
+              app.session_loop._text == "Loop 3 / \u221e",
               app.session_loop._text)
         app.loop_count = 5
         root.after(150, verify_finite)
 
     def verify_finite():
         check("a counted run reads current, total and how many are left",
-              app.session_loop._text == "Loop 3 of 5 \u00b7 2 left",
+              app.session_loop._text == "Loop 3 of 5 / 2 left",
               app.session_loop._text)
         # a run that has finished is clamped to its last loop rather than
         # counting one past the end
