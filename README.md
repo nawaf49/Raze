@@ -60,7 +60,7 @@ That means:
 
 ```powershell
 python build_assets.py
-pyinstaller --onefile --windowed --icon="assets\raze.ico" --add-data "assets;assets" --additional-hooks-dir "hooks" --exclude-module numpy --name "Raze" AutoTyper.py
+pyinstaller --onefile --windowed --icon="assets\raze.ico" --add-data "assets;assets" --additional-hooks-dir "hooks" --exclude-module numpy --exclude-module typing_extensions --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 --name "Raze" AutoTyper.py
 ```
 
 `--additional-hooks-dir "hooks"` is not optional. `hooks/hook-PIL.Image.py`
@@ -77,6 +77,19 @@ image from an array, so the import always fails at runtime and is always caught 
 but if numpy *is* on the machine it gets bundled anyway, and it drags a 20.6 MB
 OpenBLAS library with it. Excluding it keeps the payload the same size on every
 machine regardless of what else is installed.
+
+The Qt excludes (`PyQt5`, `PyQt6`, `PySide2`, `PySide6`) and
+`--exclude-module typing_extensions` guard the same boundary. Pillow's `ImageQt`
+and the clipboard library `pyperclip` both probe for a Qt binding inside
+`try:`/`except ImportError:` blocks - imports that fail harmlessly on a machine
+without Qt, but that PyInstaller follows as if they were real. One is enough:
+a stray `pip install` put PyQt5 on a build machine and the executable grew from
+15 MB to 45.6 MB of DLLs, plugins and translations for code Raze never runs
+(it draws with Tk). `typing_extensions` is the same story one layer deeper -
+`customtkinter` only names it in Python-3.7-era fallbacks - except that it
+imports `asyncio`, which drags `multiprocessing`, `hmac` and `runpy` in behind
+it, about 700 KB all told. None of these modules is ever imported at runtime;
+excluding them costs nothing and pins the payload.
 
 `python make_shortcut.py` then drops a Start Menu and Desktop shortcut.
 

@@ -466,10 +466,15 @@ being verified.
 ```powershell
 pyinstaller --onefile --windowed --icon="assets\raze.ico" `
   --add-data "assets;assets" --additional-hooks-dir "hooks" `
-  --exclude-module numpy --name "Raze" AutoTyper.py
+  --exclude-module numpy --exclude-module typing_extensions `
+  --exclude-module PyQt5 --exclude-module PyQt6 `
+  --exclude-module PySide2 --exclude-module PySide6 `
+  --name "Raze" AutoTyper.py
 ```
 
-Both flags matter:
+Every flag is load-bearing. The hook and the excludes exist for one reason —
+the payload must not depend on what happens to be installed on the build
+machine:
 
 - `--additional-hooks-dir "hooks"` replaces Pillow's own hook, which collects
   **every** codec Pillow ships including a 7.7 MB AVIF library. Raze opens one
@@ -477,6 +482,28 @@ Both flags matter:
   is most of why Raze opens fast.
 - `--exclude-module numpy` stops a 20.6 MB OpenBLAS library riding along if
   numpy happens to be installed. Raze never builds an image from an array.
+- The four Qt excludes stop ~30 MB of Qt DLLs, plugins and translations riding
+  in behind imports that only *probe* for a binding: `PIL.Image` does
+  `from . import ImageQt` at module level (ImageQt tries PyQt6, then PySide6)
+  and `pyperclip` does `import PyQt5` inside a `try:` while looking for a
+  clipboard. Neither ever opens a Qt widget — Raze draws with Tk — and while
+  no binding is installed both imports fail quietly. The day one arrives on
+  the machine (an unrelated `pip install` did exactly that) the build silently
+  goes from 15 MB to 45.6 MB. All four names are excluded because different
+  dependencies probe different ones.
+- `--exclude-module typing_extensions` stops ~700 KB of stdlib the same way.
+  Nothing here imports it on purpose: `customtkinter` and `packaging` name it
+  only in `except ImportError:` / `if TYPE_CHECKING:` branches Python 3.12
+  never takes (the suites prove the app runs with the module absent —
+  `%TEMP%\opencode\blocked_tt.py` puts `None` in `sys.modules` first), but
+  PyInstaller follows the static edge anyway, and `typing_extensions` imports
+  `asyncio.coroutines`, which pulls in asyncio, multiprocessing, hmac, runpy
+  and pkgutil behind it — 75 archive entries and 695 KB.
+- **The excludes are command-line flags, not hook attributes.** A hook-level
+  `excludes` is silently ignored (it is not a hook attribute; `excludedimports`
+  is, but it only cuts edges out of *that one* module — `pyperclip` reaches
+  Qt without touching Pillow). This cost an afternoon to learn; the command
+  line is the only place that cuts globally.
 
 Then `Start-Process ".\dist\Raze.exe" -ArgumentList "--selftest" -PassThru -Wait`
 and check the exit code. `$LASTEXITCODE` is empty for a `--windowed` exe.
