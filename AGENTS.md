@@ -72,8 +72,8 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 90 headless checks, run via `Raze.exe --selftest` |
-| `pause_and_toast.py` | 38 checks: pause/resume/toast routing, the session card's contents, the loop counter and a held notification against a real window |
+| `selftest.py` | 98 headless checks, run via `Raze.exe --selftest` |
+| `pause_and_toast.py` | 46 checks: pause/resume/toast routing, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
 | `layout_check.py` | 24 checks: the window fits the work area, the four keycaps, the hotkeys card and button hover backgrounds, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `build_assets.py` | Regenerates `assets/` artwork from source |
@@ -232,6 +232,18 @@ matches.
 - ASCII goes out character by character.
 - Non-ASCII is copied to the clipboard and pasted (`Ctrl+V`), never typed,
   because `KEYEVENTF_UNICODE` is not honoured by every application.
+- **Settings are read live, mid-run.** The worker never snapshots the
+  interval, Loop, the selection mode or the pool for the whole run: each
+  pass re-reads them from plain attributes the Tk thread writes - never a
+  Tk object - so changing any of them under a running session applies to
+  that session. `_update_pool_meta` publishes the pool as a fresh
+  `self.messages` list on every edit (**replaced, never edited in place** -
+  that invariant is what makes reading it from the worker thread safe), an
+  emptied pool mid-run keeps the last non-empty one so rewriting the box
+  cannot kill a session, and the wait between messages is re-cut from the
+  live interval in `INTERVAL_POLL_S` slices: a shortened interval lands
+  within 100 ms instead of at the next session, and `_next_deadline` - the
+  deadline the countdown tile reads - stays the truth throughout.
 
 ## Hotkeys
 
@@ -436,7 +448,7 @@ being verified.
   non-intrusive by construction: `send_enter`, `notify_balloon` and
   `is_foreground` are replaced with recorders, the window is built at alpha 0,
   and nothing is ever typed, surfaced or focused.
-  - `pause_and_toast.py` — 38 checks. The session card carries its four
+  - `pause_and_toast.py` — 46 checks. The session card carries its four
     counters, the `LAST SENT` box and the loop counter (an orphaned block once
     left the card's body unreachable after a `return`, and every other suite
     stayed green because the heartbeat swallows the `AttributeError` that
@@ -445,7 +457,10 @@ being verified.
     resume, start-while-paused does nothing, F9 is silent, the two endings
     the user did not choose do toast, the session header's loop counter reads
     finite, infinite and clamped, and a notification Windows refused is held
-    and sent once the screen frees up. It reconfigures `sys.stdout` with
+    and sent once the screen frees up; then, under a run already under way,
+    an interval shortened inside its own wait, a selection-mode flip through
+    the real checkbox, a pool edit through the real binding and a Loop change
+    through its setter all land on that same run. It reconfigures `sys.stdout` with
     `errors="replace"`: the `∞` glyph cannot be encoded on a cp1252 console
     and one raised `print` breaks the `after()` chain, stalling the harness.
   - `layout_check.py` — 24 checks. The window fits the work area's width and

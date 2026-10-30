@@ -29,6 +29,7 @@ except Exception:
 
 failures = []
 typed = []          # what the worker believes it sent
+stamps = []         # when it believes it sent it - the interval check reads these
 toasts = []         # what _toast asked Windows to show
 balloons = []       # what reached notify_balloon itself
 
@@ -53,6 +54,7 @@ def main():
 
     def fake_type(text):
         typed.append(text)
+        stamps.append(time.monotonic())
         return True
 
     A.register_fonts()
@@ -67,6 +69,11 @@ def main():
 
     app._type_text = fake_type
     app._toast = lambda body, title="Raze": toasts.append((title, body))
+    # This harness shares the machine's real profile, and both the
+    # heartbeat and a checkbox flip end in _save_config - config writing
+    # has its own coverage in selftest, against a temp folder. Nothing here
+    # may rewrite the file the real app keeps.
+    app._save_config = lambda: None
     app.msg_interval = 0.15
     # ...but the interval field is whole seconds, and _start()/_save_config()
     # now flush it (_commit_fields), which would put the field's value back
@@ -211,6 +218,104 @@ def main():
         check("and clears the pause", app.paused is False, app.paused)
         check("a stop you asked for is silent", toasts == [], str(toasts))
 
+        mid_run_settings()
+
+    # ---------------------------------------------------------------- #
+    #  settings changed while a run is under way
+    # ---------------------------------------------------------------- #
+    # The worker reads the interval, the selection mode, the pool and Loop
+    # live, so every one of them is changed here under a session that is
+    # already typing - each through the path a user would take, never by
+    # touching the worker.  _save_config is a no-op above because the real
+    # checkbox flip would otherwise carry a write of this machine's profile.
+    def mid_run_settings():
+        # back to a known session: ordered, the two lines, no loop limit
+        app.random_box.deselect()
+        app._toggle_random()
+        app.editor.delete("1.0", "end")
+        app.editor.insert("1.0", "one\ntwo")
+        app._start()
+        root.after(400, lengthen_pending)
+
+    def lengthen_pending():
+        # the next message opens a two second wait, so the shortening
+        # below lands while that wait is still in flight - the one place a
+        # setting snapshotted at start could never reach
+        app._set_msg_interval(2.0)
+        root.after(250, shorten_pending)
+
+    def shorten_pending():
+        changed = time.monotonic()
+        app._set_msg_interval(0.1)
+        root.after(700, lambda: verify_interval(changed))
+
+    def verify_interval(changed):
+        gap = next((s - changed for s in stamps if s > changed), None)
+        check("an interval shortened inside its own wait fires at once",
+              gap is not None and gap < 0.6, gap)
+        check("and the run carried straight on", app.typing is True, app.typing)
+        app._set_msg_interval(0.15)
+        root.after(200, flip_random)
+
+    def flip_random():
+        real_randrange = A.random.randrange
+        hits = []
+
+        def rec(slot):
+            hits.append(slot)
+            return 0
+
+        # the worker would take every pick from slot 0, so a message in
+        # flight when the chooser swaps cannot be told from the rest
+        A.random.randrange = rec
+        app.random_box.select()
+        app._toggle_random()            # exactly the command a click runs
+        root.after(400, lambda: watch_random(real_randrange, hits))
+
+    def watch_random(real_randrange, hits):
+        # n0 is taken once everything already in flight has landed, so
+        # only picks made with the new chooser are judged
+        n0 = len(typed)
+        root.after(500, lambda: verify_random(real_randrange, hits, n0))
+
+    def verify_random(real_randrange, hits, n0):
+        A.random.randrange = real_randrange
+        taken = typed[n0:]
+        check("the selection mode flips mid-run",
+              app._random_pick is True, app._random_pick)
+        check("and the worker picks from the pool with it",
+              len(hits) > 0 and len(taken) > 0 and all(m == "one" for m in taken),
+              "%s %s" % (hits, taken))
+        app.random_box.deselect()
+        app._toggle_random()
+        check("and flips back again",
+              app._random_pick is False, app._random_pick)
+        root.after(100, edit_pool)
+
+    def edit_pool():
+        n0 = len(typed)
+        # a keystroke's worth of edit - this is what the pool binding sees
+        app.editor.insert("end", "\nthree")
+        root.after(800, lambda: verify_pool(n0))
+
+    def verify_pool(n0):
+        taken = typed[n0:]
+        check("a pool edited mid-run sends the new line",
+              "three" in taken, taken)
+        root.after(100, set_loop_mid_run)
+
+    def set_loop_mid_run():
+        app._set_loop(1)                # what the Loop field commits
+        root.after(1500, verify_loop_end)
+
+    def verify_loop_end():
+        check("a loop count changed mid-run ends the run",
+              app.typing is False, app.typing)
+        check("and that ending is announced like any other finish",
+              len(toasts) == 1 and toasts[0][1].startswith("Finished - "),
+              str(toasts))
+        # the next stage expects to count its own toast from zero
+        del toasts[:]
         finish_run()
 
     # ---------------------------------------------------------------- #

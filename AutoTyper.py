@@ -253,6 +253,10 @@ PULSE_STEPS = 10             # brightness levels between dim and full
 TICK_MS = 50
 # how often the log is written to disk (it only runs when something changed)
 SAVE_EVERY = 60.0
+# how often a wait already in flight re-reads the message interval, so an
+# interval changed mid-run lands within this long instead of at the next
+# session - the countdown reads the same deadline, so it stays true
+INTERVAL_POLL_S = 0.1
 # how often a notification Windows refused re-asks whether it may go out
 TOAST_RETRY_S = 2.0
 # how many recent messages are kept in the file
@@ -2789,6 +2793,11 @@ class AutoTyper:
 
     def _update_pool_meta(self):
         msgs = self._collect_messages()
+        # published for the typing thread, which notices the fresh list by
+        # identity - a pool edited while a run is going takes effect from
+        # the next message on.  The list is only ever replaced, never edited
+        # in place, which is what makes reading it from that thread safe
+        self.messages = msgs
         chars = sum(len(m) for m in msgs)
         self.pool_meta.set_text(f"{len(msgs)} messages  ·  {chars} characters")
         self._update_pool_gutter()
@@ -3240,11 +3249,12 @@ class AutoTyper:
         # background and stays one click away in the taskbar.
 
     def _typing_worker(self):
-        # read the settings on the main thread - Tk variables are not thread safe
-        randomise = self._random_pick
-        auto_enter = self._auto_enter
-        loop_count = self.loop_count
-        order = list(self.messages)
+        # The settings are plain attributes the Tk thread writes - no Tk
+        # object is ever read from here - so they are picked up again every
+        # pass instead of being snapshotted for the whole run: interval,
+        # loop, selection mode and the pool may all change while a run is
+        # going and now apply to the run itself.
+        order = self.messages
         if not order:
             self._worker_done = True
             return
@@ -3255,6 +3265,23 @@ class AutoTyper:
 
         try:
             while not self.stop_event.is_set():
+                # a pool edited mid-run arrives as a fresh list from
+                # _update_pool_meta, so identity is enough to notice it.
+                # An emptied one keeps the list in hand: clearing the box to
+                # rewrite it must not kill a run already under way.  The
+                # index is the only thing that can fall out of range - a
+                # pass count left past the new length is absorbed by the
+                # pass end below, which compares with >= rather than ==
+                live = self.messages
+                if live is not order and live:
+                    order = live
+                    if index >= len(order):
+                        index = 0
+
+                randomise = self._random_pick
+                auto_enter = self._auto_enter
+                loop_count = self.loop_count
+
                 if randomise:
                     # a fresh pick every interval: the same line can win
                     # twice while another goes unsent for a whole pass
@@ -3291,13 +3318,24 @@ class AutoTyper:
                 if len(self.history) > HISTORY_KEEP:
                     del self.history[:-HISTORY_KEEP]
 
-                end = time.monotonic() + self.msg_interval
-                self._next_deadline = end
-                # an exact wait - it wakes instantly when the typer is
-                # stopped instead of spinning on a timer
-                remaining = end - time.monotonic()
-                if remaining > 0:
-                    self.stop_event.wait(remaining)
+                # the wait is re-cut from the live interval until it runs
+                # out: a shorter interval lands within INTERVAL_POLL_S of
+                # being typed and a longer one pushes this message's own
+                # deadline out, so what the countdown shows stays the truth
+                anchor = time.monotonic()
+                while not self.stop_event.is_set():
+                    deadline = anchor + float(self.msg_interval)
+                    self._next_deadline = deadline
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    # an exact wait - it wakes instantly when the typer is
+                    # stopped instead of spinning on a timer
+                    self.stop_event.wait(min(remaining, INTERVAL_POLL_S))
+                if self.stop_event.is_set():
+                    # _pause and _stop clear the deadline, and the slice
+                    # that woke on the stop may just have written it back
+                    self._next_deadline = None
 
                 # a pass is one pool's worth of messages in either mode, so
                 # Loop keeps the same meaning whether picking or walking

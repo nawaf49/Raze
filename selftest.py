@@ -399,6 +399,143 @@ def run():
                            and overridden._worker_done is True,
                            str((overridden._tab_in_stop, overridden._worker_done)))
 
+    # ------------------------------------------------------------------ #
+    #  settings changed while a run is under way
+    # ------------------------------------------------------------------ #
+    # The worker used to snapshot interval, loop, mode and pool once at
+    # start, so a change only ever reached the next session.  Each check
+    # flips one setting from inside the run - through _type_text, the moment
+    # the change has to land - and asserts the run itself moved.  Nothing
+    # here waits on the wall clock: the interval check runs on a clock the
+    # harness owns.
+    print("mid-run settings")
+
+    # a Loop raised from infinite to one pass has to end the run at the
+    # first pass boundary rather than carry on to the limit
+    looped = _Worker(["a", "b", "c"], False, 50)
+    loop_send = looped._type_text
+
+    def loop_mid_run(text):
+        ok = loop_send(text)
+        if len(looped.typed) == 1:
+            looped.loop_count = 1
+        return ok
+
+    looped._type_text = loop_mid_run
+    A.AutoTyper._typing_worker(looped)
+    failures += not _check("a loop count changed mid-run ends the run",
+                           len(looped.typed) == 3 and looped.passes == 1,
+                           "%s passes %s" % (looped.typed, looped.passes))
+
+    # picking flipped to walking: the first message is whatever the random
+    # mode chose, and from the next one on the walk has to be strict
+    walked = _Worker(["a", "b", "c"], True, 6)
+    walk_send = walked._type_text
+
+    def walk_mid_run(text):
+        ok = walk_send(text)
+        if len(walked.typed) == 1:
+            walked._random_pick = False
+        return ok
+
+    walked._type_text = walk_mid_run
+    A.AutoTyper._typing_worker(walked)
+    failures += not _check("a mode change mid-run is picked up",
+                           walked.typed[1:] == ["a", "b", "c", "a", "b"],
+                           str(walked.typed))
+
+    # a pool replaced wholesale: the new list takes over, and the walk's
+    # index - already past the end of a pool this short - is clamped rather
+    # than indexing into nothing
+    replaced = _Worker(["a", "b", "c"], False, 4)
+    replace_send = replaced._type_text
+
+    def replace_mid_run(text):
+        ok = replace_send(text)
+        if len(replaced.typed) == 1:
+            replaced.messages = ["x"]      # exactly what _update_pool_meta publishes
+        return ok
+
+    replaced._type_text = replace_mid_run
+    A.AutoTyper._typing_worker(replaced)
+    failures += not _check("a pool replaced mid-run takes over",
+                           replaced.typed == ["a", "x", "x", "x"],
+                           str(replaced.typed))
+    failures += not _check("and the walk cannot run past the new pool",
+                           replaced._worker_error is None,
+                           str(replaced._worker_error))
+
+    # clearing the box to rewrite it is one keystroke away from an empty
+    # pool, and that must not kill a run already under way
+    emptied = _Worker(["a", "b"], False, 4)
+    empty_send = emptied._type_text
+
+    def empty_mid_run(text):
+        ok = empty_send(text)
+        if len(emptied.typed) == 1:
+            emptied.messages = []
+        return ok
+
+    emptied._type_text = empty_mid_run
+    A.AutoTyper._typing_worker(emptied)
+    failures += not _check("an emptied pool does not kill the run",
+                           emptied.typed == ["a", "b", "a", "b"]
+                           and emptied._worker_error is None,
+                           "%s %s" % (emptied.typed, emptied._worker_error))
+
+    # The interval mid-wait: a clock the harness owns stands in for the
+    # monotonic one and every wait advances it, so the run takes no real
+    # time and the numbers cannot flake.  The interval is shortened from
+    # inside the first wait - the one place a snapshot could not reach.
+    class _Clock:
+        def __init__(self):
+            self.t = 5000.0
+
+        def monotonic(self):
+            return self.t
+
+    class _SlicedEvent(threading.Event):
+        """A stop_event whose wait() lands on the clock instead of sleeping."""
+
+        def __init__(self, clock, on_wait=None):
+            super().__init__()
+            self.clock = clock
+            self.waits = []
+            self.on_wait = on_wait
+
+        def wait(self, timeout=None):
+            self.waits.append(timeout)
+            if self.on_wait is not None:
+                first, self.on_wait = self.on_wait, None
+                first()
+            if timeout:
+                self.clock.t += timeout
+            return self.is_set()
+
+    clock = _Clock()
+    sliced = _Worker(["a", "b"], False, 2)
+    sliced.msg_interval = 1.0
+    sliced.stop_event = _SlicedEvent(clock, lambda: setattr(
+        sliced, "msg_interval", 0.02))
+    real_time = A.time
+    try:
+        A.time = clock
+        started = clock.t
+        A.AutoTyper._typing_worker(sliced)
+    finally:
+        A.time = real_time
+
+    failures += not _check("the wait is cut into slices so a change can land",
+                           sliced.stop_event.waits
+                           and sliced.stop_event.waits[0] == min(1.0, A.INTERVAL_POLL_S),
+                           str(sliced.stop_event.waits))
+    failures += not _check("an interval shortened inside the wait fires at once",
+                           sliced.typed == ["a", "b"] and clock.t - started < 0.5,
+                           "%s %.3fs" % (sliced.typed, clock.t - started))
+    failures += not _check("a wait the stop cut through leaves no countdown",
+                           sliced._next_deadline is None,
+                           str(sliced._next_deadline))
+
     # The four keys are deliberately not aliases of one another.  _tick_inner
     # is driven straight on a stub so this needs no window, no desktop and no
     # worker thread - the flags are the whole thread boundary, so setting them
