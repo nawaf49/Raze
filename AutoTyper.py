@@ -33,6 +33,124 @@ import hotkeys as hotkeymod
 
 
 # --------------------------------------------------------------------------- #
+#  Draw-engine patch (paint the box the widget actually is)
+# --------------------------------------------------------------------------- #
+def _patch_ctk_draw_engine():
+    """Make every bordered widget paint to the full edge of its canvas.
+
+    Two compounding roundings in customtkinter 6.0 leave a widget's own
+    canvas uncovered, which is invisible at 100% but shows at every other
+    resolution: borders never close on the right and bottom, and hairlines
+    under 2 design px compute to zero height and vanish.
+
+    1. Each widget stores its size by reverse-scaling the real canvas size,
+       then re-scales it on draw; at fractional scales the round trip lands
+       a pixel or two short of the canvas that is actually there.
+    2. The engine then floors that already-short size to an even number.
+
+    Once mapped, the canvas always fills the widget exactly (measured on
+    every widget in the app across the whole scale range), so the engine is
+    handed the canvas's own device-pixel size instead of the caller's, and
+    the even floor is dropped for the call.  Widgets draw once while still
+    unmapped, and customtkinter never redraws them afterwards unless their
+    size changes - so a <Configure> is bound on the canvas from the very
+    first draw: the moment the widget is mapped the canvas reports its true
+    integer size and the widget is repainted at it.  Before that first map
+    the canvas reports 1x1, so the caller's size is kept.  At 100% the
+    caller's size is already the exact integer canvas size and only the
+    even floor was biting (odd design widths painted a column short), so
+    the reference resolution gains exactly its missing border pixels.
+    """
+    try:
+        from customtkinter.windows.widgets.core_rendering import draw_engine as _de
+    except Exception:
+        return
+    _cls = getattr(_de, "DrawEngine", None)
+    if _cls is None or getattr(_cls, "_raze_patched", False):
+        return
+    _orig = getattr(_cls, "draw_rounded_rect_with_border", None)
+    if _orig is None:
+        return
+
+    def _track_canvas(canvas):
+        """Repaint the widget when its canvas lands on a size the paint did
+        not cover.  Geometry settles while the widget is still unmapped, so
+        the <Configure> it gets during the layout pass is not enough: a
+        packed widget's canvas can reach its final size before the window
+        maps and never be resized again.  <Map> is the event that fires
+        when the widget actually becomes visible, and it repaints only if
+        the size on screen differs from what was painted.  A position-only
+        Configure compares equal and costs one tuple compare."""
+        widget = canvas.master
+
+        def repaint(event=None):
+            try:
+                if not canvas.winfo_exists() or not canvas.winfo_ismapped():
+                    return
+                size = (canvas.winfo_width(), canvas.winfo_height())
+                if size != getattr(canvas, "_raze_painted", None):
+                    widget._draw()
+            except Exception:
+                pass
+
+        try:
+            canvas.bind("<Configure>", repaint, add="+")
+            canvas.bind("<Map>", repaint, add="+")
+        except Exception:
+            pass
+
+    def draw_rounded_rect_with_border(self, width, height, corner_radius,
+                                      border_width,
+                                      overwrite_preferred_drawing_method=None):
+        canvas = getattr(self, "_canvas", None)
+        if canvas is not None:
+            try:
+                # the tracker goes on from the first draw - widgets draw
+                # while unmapped and would otherwise never be repainted
+                if not getattr(canvas, "_raze_tracked", False):
+                    canvas._raze_tracked = True
+                    _track_canvas(canvas)
+                if canvas.winfo_exists() and canvas.winfo_ismapped():
+                    width = canvas.winfo_width()
+                    height = canvas.winfo_height()
+                    canvas._raze_painted = (width, height)
+            except Exception:
+                pass
+        # customtkinter scales an int border width with int(), so a
+        # 1-design-px ring computes to int(0.6) = 0 below 100% and the
+        # widget paints borderless where the reference resolution has its
+        # border - restore the declared one.  A design border only reaches
+        # zero while it is still 1 design px (2 px never truncates above
+        # SCALE_MIN), and a declared 0 stays 0, so this changes nothing at
+        # 100% and nothing anywhere else but the vanished ring.
+        if border_width == 0:
+            try:
+                _widget = getattr(canvas, "master", None) if canvas is not None else None
+                if _widget is not None and getattr(_widget, "_border_width", 0):
+                    border_width = 1
+            except Exception:
+                pass
+        # the even floor is what turns a 1-design-px hairline into nothing;
+        # confined to this call so nothing else on the engine changes
+        was_w, was_h = (self._round_width_to_even_numbers,
+                        self._round_height_to_even_numbers)
+        self._round_width_to_even_numbers = False
+        self._round_height_to_even_numbers = False
+        try:
+            return _orig(self, width, height, corner_radius, border_width,
+                         overwrite_preferred_drawing_method)
+        finally:
+            self._round_width_to_even_numbers = was_w
+            self._round_height_to_even_numbers = was_h
+
+    _cls.draw_rounded_rect_with_border = draw_rounded_rect_with_border
+    _cls._raze_patched = True
+
+
+_patch_ctk_draw_engine()
+
+
+# --------------------------------------------------------------------------- #
 #  DPI awareness (must run before any window exists)
 # --------------------------------------------------------------------------- #
 def _enable_dpi_awareness():
