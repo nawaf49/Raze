@@ -604,24 +604,25 @@ open — the single-instance check reports honestly in both states.
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
 - **Exactly one release exists at a time.** When the next one ships, delete the
-  old: `gh release delete v1.13 --repo nawaf49/Raze --yes`. The user's rule — a
+  old: `gh release delete v1.14 --repo nawaf49/Raze --yes`. The user's rule — a
   visitor sees one clear download, never a menu of old versions. The private
-  repo's git log is the only remaining record of what v1.0–v1.12 contained.
-  **Current: v1.13.**
+  repo's git log is the only remaining record of what v1.0–v1.13 contained.
+  **Current: v1.14.**
 - **Exactly one *tag* too.** Deleting the release leaves its tag behind, and
   the Tags page would still advertise old versions:
-  `gh api -X DELETE repos/nawaf49/Raze/git/refs/tags/v1.13`. Check with
+  `gh api -X DELETE repos/nawaf49/Raze/git/refs/tags/v1.14`. Check with
   `gh api repos/nawaf49/Raze/tags --jq ".[].name"` — only the current one may
   answer. Never touch the current tag: it is what the release hangs on.
   (Public repo tags are pruned this way, so the Tags page shows one entry.)
 - Create it as a real release, not a draft; it becomes *Latest* on its own:
-  `gh release create v1.14 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
+  `gh release create v1.15 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
 - **Verify before publishing.** `Get-FileHash .\dist\Raze.exe -Algorithm SHA256`
   must equal the digest GitHub reports for the uploaded asset; the SHA256 that
   goes in the notes comes from that match, never from a build nobody re-checked.
   Both sides are read back after publishing — `gh release view <tag>
   --json assets --jq ".assets[].digest"`.
-  (v1.13: `49F81E0A7652A4CBBC93ED25C4EA22C2B9E6544F43CA6F5B569A5AAA4C271620`
+  (v1.14: `3EBFDB2D71F7B5AFC891A1C5E370D50AC2AAD8B9533D8F3D523F7C0AD1E78BBE`
+  over 15,035,335 bytes; v1.13: `49F81E0A7652A4CBBC93ED25C4EA22C2B9E6544F43CA6F5B569A5AAA4C271620`
   over 14,997,700 bytes; v1.12: `C576CF2A16F059ED4C82D761B871BC1F2456F48B782E0755E6DAD9422F1FB2D2`
   over 14,988,741 bytes; v1.11: `B6A6DD62C09A7FF326EA63FE99DF15EB3C8BE763C93080E7F4B986D43E8CE0B1`
   over 14,988,092 bytes; v1.10: `CC0A17ECED4CA4FC08281A199D383D45D4ABB5624F52D07C1AB75B522576DDB0`
@@ -653,7 +654,7 @@ and stops if you tab back in.
 ```
 
   Read the published one back with
-  `gh release view v1.13 --repo nawaf49/Raze --json body --jq .body`.
+  `gh release view v1.14 --repo nawaf49/Raze --json body --jq .body`.
 
 ## The public README
 
