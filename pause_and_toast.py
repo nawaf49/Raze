@@ -19,6 +19,9 @@ import AutoTyper as A
 
 A.reduce_motion_enabled = lambda: True
 
+# a test must never put anything on the user's Discord profile
+A.rpcmod.enabled = False
+
 # the loop counter legitimately reads "Loop 3 ∞", and a cp1252 console
 # cannot encode it - one raised print would break the callback chain and
 # stall the whole harness

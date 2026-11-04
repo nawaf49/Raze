@@ -81,13 +81,22 @@ def font(font_dir, weight, px_size, path=None):
     return _font_cache[key]
 
 
+# Below this a glyph stops being readable, so `fit` gives up shrinking and
+# falls back to cutting.  A counter would have to outgrow its box by more
+# than a factor of three at six pixels to ever get here.
+FIT_MIN_PX = 6
+
+
 def render(text, px_size, font_dir, weight="Regular", color="#ffffff",
-           tracking=0.0, pad=1, path=None, darken=True, min_px=None, max_px=None):
+           tracking=0.0, pad=1, path=None, darken=True, min_px=None, max_px=None,
+           fit=False):
     """Rasterise `text` into an RGBA image of exactly the target pixel size.
 
     px_size  - the em size in *device* pixels
     tracking - extra letter spacing in device pixels
     path     - optional explicit font file (used for the monospaced log)
+    fit      - with max_px, shrink the glyph size until the whole string
+               fits instead of cutting it short with an ellipsis
     """
     if not text:
         text = " "
@@ -108,6 +117,16 @@ def render(text, px_size, font_dir, weight="Regular", color="#ffffff",
     # cannot push the layout around.
     if max_px:
         limit = max_px - pad * 2
+        if advance > limit and fit:
+            # A counter keeps every digit: the glyph size comes down until
+            # the whole string fits, and the box stays exactly as wide as
+            # it was, so nothing else on the row can move.
+            while px_size > FIT_MIN_PX and advance > limit:
+                px_size = max(FIT_MIN_PX, px_size -
+                              max(1, int(px_size * (1.0 - limit / advance))))
+                fnt = font(font_dir, weight, px_size, path)
+                ascent, descent = fnt.getmetrics()
+                advance = _advance(text)
         if advance > limit:
             cut = text
             while cut and _advance(cut + "\u2026") > limit:

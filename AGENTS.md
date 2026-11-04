@@ -76,6 +76,8 @@ These are not preferences. Breaking one silently ruins the product.
 | `pause_and_toast.py` | 46 checks: pause/resume/toast routing, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
 | `layout_check.py` | 24 checks: the window fits the work area, the four keycaps, the hotkeys card and button hover backgrounds, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
+| `rpc.py` | Discord presence: named pipe over ctypes, its own thread |
+| `rpc_check.py` | 49 checks: the presence protocol against a fake local pipe |
 | `build_assets.py` | Regenerates `assets/` artwork from source |
 | `make_shortcut.py` | Start Menu + Desktop shortcut "Raze" |
 | `AGENTS.md` | This file — read it first |
@@ -200,14 +202,22 @@ down together, still sharp.
   still cannot move anything — but a container pinned *around* one can clip
   it, which is why the config card's label rows propagate their height and
   the card gives back padding instead of squeezing (see *Config*).
-- **A tile sizes itself from its own caption, once, at build.** `StatTile`
-  takes `room = max(width, cap.winfo_reqwidth()/S + 2*PAD + 2)` and pins
-  that, so a running counter can never move it; the value gets
-  `set_box(max_width=room - 2*PAD)` so a 7-digit counter ellipsizes instead
-  of clipping. The measurement matters because a caption's **design** width
-  peaks *below* 100%: the font is `round(size*S)` and the tracking
-  `round(1.1*S)`, neither of which shrinks in step with `S` — `MESSAGES
-  SENT` wants 109.8 design px at `S=0.51` against 89 at `S=1.0`.
+- **A tile sizes itself once, at build, from the longest thing it can ever
+  show.** `StatTile` takes `room = max(width, cap.winfo_reqwidth()/S + 2*PAD + 2,
+  worst_room)` and pins that, so a running counter can never move it.
+  `worst_room` is `_worst_room(worst)` — the tile's own ceiling string
+  (`999999999` messages, `9999999999` characters, `999y 364d` elapsed,
+  `86400s` next) rendered with `max_width=None` and **never** through the
+  box: `textengine.render` ellipsizes internally when handed a `max_px`, so
+  reading the box's own artwork only ever shows the already-cut result and
+  can never fail. The value label is built `fit=True`: past the ceiling the
+  glyphs shrink (`FIT_MIN_PX = 6` floor) instead of the string being cut —
+  an ellipsis in a counter is a defect, because this app runs for years and
+  every digit has to survive; beyond the floor anything longer still fits,
+  just smaller. The caption measurement matters because a caption's
+  **design** width peaks *below* 100%: the font is `round(size*S)` and the
+  tracking `round(1.1*S)`, neither of which shrinks in step with `S` —
+  `MESSAGES SENT` wants 109.8 design px at `S=0.51` against 89 at `S=1.0`.
 - **The label's `bg` must always be the fill it is standing on.**
   `BakedButton._on_enter` lightens the pill's `fg_color`, but the artwork keeps
   the rest colour painted behind the glyphs — a stale rectangle that read as a
@@ -399,12 +409,66 @@ tabbed back in. **Never** on F9, pause, or resume — they already know why.
   query that did not answer. `_start` clears any pending message — a new
   session supersedes an announcement that is about to be out of date.
 
+## Discord presence
+
+Rich Presence on its own thread, exactly like the hotkey listener. Built with
+ctypes and the standard library because **hard rule 6** keeps the exe to one
+self-contained file: a presence library drags its own http stack into a
+payload that is unpacked from scratch on every launch.
+
+- The pipe is `\\.\pipe\discord-ipc-0` … `-9`; both the `\\.\` and `\\?\`
+  namespaces are tried, because Discord has used each. Framing is an 8-byte
+  header — `uint32 opcode, uint32 length`, little-endian — then JSON.
+  Opcodes: 0 handshake, 1 frame, 2 close, 3 ping, 4 pong.
+- **`CreateFileW` needs `restype = c_void_p`.** Left at the default `c_int`
+  the 64-bit handle comes back truncated and the pipe looks permanently
+  unavailable — the same trap `GetForegroundWindow` sets elsewhere.
+- Reads go through **`PeekNamedPipe`, never a blocking `ReadFile`**: the
+  thread has to stay interruptible so `stop()` can join it promptly, and a
+  blocked read would sit on an idle pipe until Discord happened to speak.
+- **Discord not running is the ordinary case, not an error.** The thread
+  reconnects every 5 s forever and does nothing in between. It pushes on
+  change only, never more than once a second.
+- The Tk thread's entire interface is `set_state(status, lifetime,
+  total_secs)` — three values under one lock. The heartbeat feeds it once per
+  tick; every byte of I/O happens on the presence thread.
+- **The timer never starts over.** It counts from `_total_secs`, the lifetime
+  twin of `stats["elapsed"]`, accumulated in `_tick_inner` by the same delta
+  the session clock moved and stored as `total_secs` in the config — so a new
+  session picks it up where the last one left it instead of returning to zero,
+  and a pause costs it nothing (pause nulls `_session_start`, so the
+  accumulating block does not even run). It is handed over only while the clock
+  actually runs: Discord draws it client-side from `start`, and a frozen total
+  would drift forward between pushes and snap back on each one, which is why a
+  paused session shows no timer at all.
+- The state line is **always the lifetime total** from `daily`, never the
+  session's own count. The session card is the place for that number; a profile
+  is a stranger's view, and the only number worth showing a stranger is the one
+  that never goes down.
+- The activity carries one **button** — `Get Raze` → the public repo, never the
+  source one. That is the real point of a presence: a stranger sees the
+  activity and has somewhere to go. `REPO_URL` and `BUTTON_LABEL` are the two
+  constants. Discord does not always draw the button for the account that set
+  it, so check with an alt or a friend before calling it broken.
+- `_on_close` stops it, and `stop()` clears the activity before the thread
+  leaves, so the profile does not keep showing a session that ended.
+- `CLIENT_ID` lives in `rpc.py`. Every call is inside `try/except`: a pipe
+  that breaks mid-frame is dropped and retried rather than raised on a
+  thread nobody is watching.
+- The activity type is left at 0 ("Playing"), which is what Discord gives
+  third-party RPC by default. Flagged to the user at build time: while a
+  game is running it may compete with the game's own presence.
+
 ## Config
 
 `%APPDATA%\Raze\config.json`. Keys: `msg_interval`, `loop`, `random`,
 `start_key`, `stop_key`, `pause_key`, `resume_key`, `messages`, `history`,
-`daily`.
+`daily`, `total_secs`.
 
+- `total_secs` is **lifetime typing seconds** — the presence timer counts from
+  it, which is why that timer never starts over. It is absent from configs
+  written before the presence existed, and that is fine: it starts at zero and
+  grows from there.
 - `history` is a list of `{"t": "...", "m": "..."}`, capped at `HISTORY_KEEP`.
   Content and timestamps are **stored but never displayed** — the History tab
   shows day counts and a lifetime total only.
@@ -436,7 +500,9 @@ being verified.
   return codes instead, and **ask before** showing one.
 - Harnesses that build a real `AutoTyper` must set
   `A.reduce_motion_enabled = lambda: True` and re-apply `root.attributes("-alpha", 0.0)`
-  **after** construction.
+  **after** construction, and must set `A.rpcmod.enabled = False` — otherwise
+  the presence thread opens Discord's real pipe and puts a live activity on
+  the user's profile while the test runs.
 - Drive with `root.after()`-scheduled steps. Never a busy `root.update()` loop.
 - Only ever stop processes this session started, and only by PID.
 - `capture()` needs the top-level handle: `int(root.wm_frame(), 16)`. Off-screen
@@ -444,10 +510,10 @@ being verified.
 - `selftest.py` stubs the app with a `_Worker` class that replaces `_type_text`.
   New worker behaviour needs new fields on that stub or it raises silently
   inside the worker's `except`.
-- **Three harnesses are committed** next to it, and all of them are
+- **Four harnesses are committed** next to it, and all of them are
   non-intrusive by construction: `send_enter`, `notify_balloon` and
   `is_foreground` are replaced with recorders, the window is built at alpha 0,
-  and nothing is ever typed, surfaced or focused.
+  the presence seam is off, and nothing is ever typed, surfaced or focused.
   - `pause_and_toast.py` — 46 checks. The session card carries its four
     counters, the `LAST SENT` box and the loop counter (an orphaned block once
     left the card's body unreachable after a `return`, and every other suite
@@ -469,6 +535,13 @@ being verified.
     card still fits its tab at 348 px, every button's label sits on the fill it
     is actually looking at (rest **and** hover), and it captures `typer.png` /
     `hotkeys.png` for the eye to check.
+  - `rpc_check.py` — 49 checks. The presence protocol end to end: handshake,
+    all three activity shapes, the repo button, the proof that a later session
+    picks the clock up rather than restarting it, ping/pong, the push throttle,
+    the clear-down on exit, byte- and message-mode pipes, and the disabled
+    seam. It swaps `rpc._PIPES` for a pipe it creates itself, so **Discord's
+    real pipe is never opened** even while Discord is running. Its own
+    `CLIENT_ID` literal pins the shipped app id rather than importing it.
   - `capture_window.py` — the PrintWindow helper `layout_check.py` uses.
   Run them with `python <file>` from the project root; each prints
   `RESULT: PASS` and exits 0.

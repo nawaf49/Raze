@@ -30,6 +30,7 @@ from PIL import Image
 import pyperclip
 
 import hotkeys as hotkeymod
+import rpc as rpcmod
 
 
 # --------------------------------------------------------------------------- #
@@ -972,7 +973,8 @@ def mix(color_a, color_b, t):
 
 
 def text_photo(text, size, weight="Regular", color=TEXT, tracking=0.0,
-               mono=False, darken=True, min_width=None, max_width=None):
+               mono=False, darken=True, min_width=None, max_width=None,
+               fit=False):
     """Rasterise text at the display's native resolution.
 
     The glyphs are drawn by FreeType at exactly the pixel size they are
@@ -980,7 +982,7 @@ def text_photo(text, size, weight="Regular", color=TEXT, tracking=0.0,
     so the antialiasing stays neutral and every stem lands on a whole pixel.
     """
     key = (text, size, weight, color, round(tracking, 3), S, mono, darken,
-           min_width, max_width)
+           min_width, max_width, fit)
     if key in _TEXT_CACHE:
         return _TEXT_CACHE[key]
     if len(_TEXT_CACHE) > 4000:
@@ -994,7 +996,8 @@ def text_photo(text, size, weight="Regular", color=TEXT, tracking=0.0,
                  tracking=px(tracking), darken=darken,
                  path=_mono_font_path() if mono else None,
                  min_px=px(min_width) if min_width else None,
-                 max_px=px(max_width) if max_width else None)
+                 max_px=px(max_width) if max_width else None,
+                 fit=fit)
     photo = ImageTk.PhotoImage(img)
     _TEXT_CACHE[key] = (photo, img.size)
     return _TEXT_CACHE[key]
@@ -1044,7 +1047,8 @@ class BakedLabel(tk.Label):
     """
 
     def __init__(self, master, text="", size=12, weight="Regular", color=TEXT,
-                 tracking=0.0, mono=False, min_width=None, max_width=None, **kwargs):
+                 tracking=0.0, mono=False, min_width=None, max_width=None,
+                 fit=False, **kwargs):
         bg = kwargs.pop("bg", None) or resolve_bg(master)
         if kwargs.get("height"):
             kwargs["height"] = px(kwargs["height"])
@@ -1058,6 +1062,8 @@ class BakedLabel(tk.Label):
         self._mono = mono
         self._min_width = min_width
         self._max_width = max_width
+        # True: text that outgrows the box is drawn smaller, never cut short
+        self._fit = fit
         # whether the caller pinned a height at build time (already px()d)
         self._fixed_height = bool(kwargs.get("height"))
         self._photo = None
@@ -1103,7 +1109,7 @@ class BakedLabel(tk.Label):
     def _render(self):
         photo, _size = text_photo(self._text, self._size, self._weight, self._color,
                                   self._tracking, self._mono, self._darken,
-                                  self._min_width, self._max_width)
+                                  self._min_width, self._max_width, fit=self._fit)
         self._photo = photo
         self.configure(image=photo, text="")
         if self._fixed_height:
@@ -1335,8 +1341,10 @@ class NumberField(ctk.CTkFrame):
 class StatTile(ctk.CTkFrame):
     # design px of room either side of the caption and the value
     PAD = 14
+    VALUE_SIZE = 21
+    VALUE_WEIGHT = "SemiBold"
 
-    def __init__(self, master, caption, width=None, **kwargs):
+    def __init__(self, master, caption, width=None, worst=None, **kwargs):
         super().__init__(master, fg_color=SURFACE_2, corner_radius=14,
                          border_width=1, border_color=BORDER, **kwargs)
         self.grid_columnconfigure(0, weight=1)
@@ -1347,8 +1355,9 @@ class StatTile(ctk.CTkFrame):
         cap.grid(row=1, column=0, sticky="w", padx=self.PAD)
         # the tile has a fixed width, so a counter going from 9 to 10 cannot
         # move a single pixel - the value stays left aligned under its caption
-        self.value = BakedLabel(self, "0", size=21, weight="SemiBold", color=TEXT,
-                                anchor="w", height=28)
+        self.value = BakedLabel(self, "0", size=self.VALUE_SIZE,
+                                weight=self.VALUE_WEIGHT, color=TEXT,
+                                anchor="w", height=28, fit=True)
         self.value.grid(row=2, column=0, sticky="w", padx=self.PAD, pady=(2, 0))
         if width:
             # The caption is already rendered, so the room it needs is known
@@ -1356,14 +1365,33 @@ class StatTile(ctk.CTkFrame):
             # scale (the font is round(size*S) and the tracking round(1.1*S),
             # neither of which shrinks in step with S), so the box takes the
             # wider of the design width and what this scale's artwork needs.
-            # It is computed once, at build time: a running counter still
-            # cannot move it.
+            # `worst` - the longest string the counter can ever print - is
+            # measured the same way, so a value is never squeezed by its own
+            # caption's box.  It is computed once, at build time: a running
+            # counter still cannot move it.
             room = max(width, cap.winfo_reqwidth() / S + 2 * self.PAD + 2)
+            if worst:
+                room = max(room, self._worst_room(worst))
             self.configure(width=room)
             self.grid_propagate(False)
-            # and a value that outgrows the box (7 digits and up) is
-            # ellipsized by its own label rather than cut by the tile
+            # and a value that outgrows the box anyway (a session past the
+            # ceiling's ceiling) is drawn at a size that fits it - every
+            # digit stays, nothing is ever ellipsized away
             self.value.set_box(max_width=room - 2 * self.PAD)
+
+    def _worst_room(self, worst):
+        """Design-px room `worst` needs, measured uncut at this scale.
+
+        The measurement has to ask for the artwork with no max_px:
+        `textengine.render` ellipsizes *internally* when handed one, so
+        reading back the box's own artwork only ever shows the already-cut
+        result and can never fail.  The box must end up wide enough that
+        `px(room - 2*PAD)` clears dims[0]; the +2 and +3 are margin so a
+        fractional scale can never land one pixel short.
+        """
+        _photo, dims = text_photo(worst, self.VALUE_SIZE, self.VALUE_WEIGHT,
+                                  TEXT, 0.0, False, True, None, None)
+        return (dims[0] + 2) / S + 2 * self.PAD + 3
 
     def set(self, text, color=None):
         self.value.set_text(text)
@@ -1440,6 +1468,10 @@ class AutoTyper:
         self.resume_key = "f7"
         self.messages = []
         self.stats = {"sent": 0, "chars": 0, "elapsed": 0.0}
+        # lifetime typing seconds, kept beside the session clock and stored in
+        # the config - the presence counts from this so its timer never starts
+        # over, however many sessions come and go
+        self._total_secs = 0.0
         self._next_deadline = None
         self._session_start = None
         self._last_message = ""
@@ -1455,6 +1487,9 @@ class AutoTyper:
         # on the Tk thread - the only thing that crosses between the two
         self._pause_requested = False
         self._resume_requested = False
+        # the status the presence thread works from, written on the Tk thread
+        # by _set_status and read by the heartbeat
+        self._rpc_status = "IDLE"
         self._history_dirty = False
         self._last_save = 0.0
         # a notification Windows would not show yet, and the last time the
@@ -1486,6 +1521,10 @@ class AutoTyper:
 
         self._apply_config()
         self._register_hotkey()
+        # Discord presence: its own thread, exactly like the hotkey listener,
+        # and as silent as the toast when Discord is not running
+        self.presence = rpcmod.Presence()
+        self.presence.start()
         self._center_window()
         self._play_intro()
         self.root.after(150, self._tick)
@@ -1726,6 +1765,7 @@ class AutoTyper:
                    dy=INTRO_DROP)
 
     def _set_status(self, text, color):
+        self._rpc_status = text
         self.status_text.set_text(text)
         self.status_text.set_color(color)
         self.status_dot.set_color(color)
@@ -2546,17 +2586,24 @@ class AutoTyper:
         body = ctk.CTkFrame(card, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=24, pady=(0, 20))
         # only the preview may grow - the four counters keep a fixed width so
-        # a number changing can never shift the row
+        # a number changing can never shift the row.  Each tile is cut for
+        # its own worst case (`worst`): 9 digits of messages, 10 of
+        # characters, the elapsed clock's `999y 364d`, a day of countdown -
+        # and anything longer is drawn smaller rather than shortened.
         body.grid_columnconfigure(4, weight=1)
         body.grid_rowconfigure(0, weight=1)
 
-        self.tile_sent = StatTile(body, "MESSAGES SENT", width=118)
+        self.tile_sent = StatTile(body, "MESSAGES SENT", width=118,
+                                  worst="999999999")
         self.tile_sent.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        self.tile_chars = StatTile(body, "CHARACTERS", width=104)
+        self.tile_chars = StatTile(body, "CHARACTERS", width=104,
+                                   worst="9999999999")
         self.tile_chars.grid(row=0, column=1, sticky="nsew", padx=8)
-        self.tile_time = StatTile(body, "ELAPSED", width=118)
+        self.tile_time = StatTile(body, "ELAPSED", width=118,
+                                  worst="999y 364d")
         self.tile_time.grid(row=0, column=2, sticky="nsew", padx=8)
-        self.tile_next = StatTile(body, "NEXT IN", width=92)
+        self.tile_next = StatTile(body, "NEXT IN", width=92,
+                                  worst="86400s")
         self.tile_next.grid(row=0, column=3, sticky="nsew", padx=(8, 20))
 
         preview = ctk.CTkFrame(body, fg_color=SURFACE_2, corner_radius=14,
@@ -2668,6 +2715,12 @@ class AutoTyper:
             for stamp, _message in self.history:
                 day = stamp[:10]
                 self.daily[day] = self.daily.get(day, 0) + 1
+        # absent from any config written before the presence existed, which is
+        # fine - it simply starts at zero and grows from there
+        try:
+            self._total_secs = float(c.get("total_secs") or 0.0)
+        except Exception:
+            self._total_secs = 0.0
         msgs = c.get("messages") or ["Hello there!", "How can I help you?", "Have a great day!"]
         self.editor.insert("1.0", "\n".join(msgs))
         self._update_pool_meta()
@@ -2701,6 +2754,7 @@ class AutoTyper:
             "random": self._random_pick,
             "history": [{"t": t, "m": m} for t, m in self.history[-HISTORY_KEEP:]],
             "daily": self.daily,
+            "total_secs": round(self._total_secs, 3),
         })
         try:
             write_config(self.cfg)
@@ -3513,11 +3567,26 @@ class AutoTyper:
             loop_label.set_text(self._loop_text())
 
         if self._session_start and (self.typing or self.arming):
-            self.stats["elapsed"] = time.monotonic() - self._session_start
+            elapsed = time.monotonic() - self._session_start
+            # the lifetime total moves by exactly what the session moved by,
+            # so nothing is counted twice and a pause costs it nothing - pause
+            # nulls _session_start, so this block does not even run then
+            self._total_secs += elapsed - self.stats["elapsed"]
+            self.stats["elapsed"] = elapsed
 
         self.tile_sent.set(str(self.stats["sent"]), GREEN if self.stats["sent"] else TEXT)
         self.tile_chars.set(str(self.stats["chars"]))
         self.tile_time.set(_elapsed_text(self.stats["elapsed"]))
+
+        # Hand the presence thread its three values.  It decides on its own
+        # whether anything is worth pushing to Discord, so this stays cheap
+        # enough to run on every heartbeat tick.
+        try:
+            self.presence.set_state(self._rpc_status,
+                                    sum(self.daily.values()),
+                                    self._total_secs)
+        except Exception:
+            pass
 
         nxt = 0.0
         if self._next_deadline and self.typing:
@@ -3573,6 +3642,12 @@ class AutoTyper:
         # a notification still on screen would otherwise outlive the app
         try:
             notify_clear(getattr(self, "_raze_hwnd", 0))
+        except Exception:
+            pass
+        # and so would a presence: the profile must not go on showing a
+        # session that has ended
+        try:
+            self.presence.stop()
         except Exception:
             pass
         try:
