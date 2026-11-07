@@ -963,6 +963,94 @@ def run():
     failures += not _check("a fresh download is offered the install",
                            A.install_prompt_needed(fresh, False, False))
 
+    print("update")
+    # Read-only throughout: the checker thread downloads and the apply
+    # path writes, so the selftest only ever asserts on the pure
+    # functions - version compare, release parsing and the plan.
+    failures += not _check("a tag with a v prefix parses",
+                           A.parse_version("v1.17") == (1, 17),
+                           str(A.parse_version("v1.17")))
+    failures += not _check("a bare version parses",
+                           A.parse_version("1.17.0") == (1, 17, 0),
+                           str(A.parse_version("1.17.0")))
+    failures += not _check("junk never parses",
+                           A.parse_version("latest") is None
+                           and A.parse_version("") is None
+                           and A.parse_version(None) is None
+                           and A.parse_version("v1.x") is None)
+    failures += not _check("a newer tag counts as newer",
+                           A.update_is_newer("v1.17", "1.16")
+                           and A.update_is_newer("2.0", "1.16"))
+    failures += not _check("the same version is not newer",
+                           not A.update_is_newer("v1.16", "1.16"))
+    failures += not _check("an older tag is not newer",
+                           not A.update_is_newer("v1.15", "1.16"))
+    failures += not _check("an unparseable tag never triggers",
+                           not A.update_is_newer("nightly", "1.16")
+                           and not A.update_is_newer(None, "1.16"))
+    failures += not _check("a short tag is padded, not truncated",
+                           not A.update_is_newer("v1.16", "1.16.1"))
+    rel = A.update_release({
+        "tag_name": "v1.17",
+        "assets": [
+            {"name": "notes.txt", "browser_download_url": "x"},
+            {"name": A.UPDATE_ASSET,
+             "browser_download_url": "https://example/Raze.exe",
+             "digest": "sha256:ABC123"},
+        ],
+    })
+    failures += not _check("the release yields tag, url and digest",
+                           rel == {"tag": "v1.17",
+                                   "url": "https://example/Raze.exe",
+                                   "digest": "abc123"},
+                           str(rel))
+    missing = A.update_release({"tag_name": "v1.17", "assets": []})
+    failures += not _check("a release without the exe is not applicable",
+                           missing["url"] is None and missing["digest"] is None
+                           and missing["tag"] == "v1.17",
+                           str(missing))
+    nodigest = A.update_release({
+        "tag_name": "v1.17",
+        "assets": [{"name": A.UPDATE_ASSET,
+                    "browser_download_url": "https://example/Raze.exe"}],
+    })
+    failures += not _check("an asset without a digest is not applicable",
+                           nodigest["url"] is not None
+                           and nodigest["digest"] is None,
+                           str(nodigest))
+    failures += not _check("a non-dict release parses to nothing",
+                           A.update_release(None) == {"tag": None, "url": None,
+                                                      "digest": None}
+                           and A.update_release("oops")["tag"] is None)
+    up = A.update_plan()
+    temp = os.environ.get("TEMP", "")
+    failures += not _check("the plan's download sits in TEMP",
+                           up["download"] == A.update_download_path()
+                           and up["download"].startswith(temp) and temp,
+                           up["download"])
+    failures += not _check("the download path is one fixed file",
+                           up["download"].endswith("Raze-update.exe"),
+                           up["download"])
+    failures += not _check("the plan watches the public repo",
+                           up["repo"] == "nawaf49/Raze"
+                           and up["asset"] == "Raze.exe",
+                           up["repo"])
+    failures += not _check("the plan carries the running version",
+                           up["version"] == A.APP_VERSION
+                           and up["tag"] == "v%s" % A.APP_VERSION
+                           and up["poll_s"] >= 3600,
+                           up["tag"])
+    failures += not _check("the plan never touches the config profile",
+                           not os.path.normcase(up["download"]).startswith(
+                               os.path.normcase(data_home) + os.sep),
+                           up["download"])
+    if getattr(sys, "frozen", False):
+        failures += not _check("a frozen run enables the updater",
+                               up["enabled"] and up["target"])
+    else:
+        failures += not _check("a dev run never checks for updates",
+                               not up["enabled"] and not up["target"])
+
     print()
     if failures:
         print(f"SELFTEST FAILED - {failures} check(s) did not pass")

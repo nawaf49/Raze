@@ -891,6 +891,283 @@ def reduce_motion_enabled() -> bool:
 
 
 # --------------------------------------------------------------------------- #
+#  Auto-updater
+# --------------------------------------------------------------------------- #
+# Mandatory: every copy watches nawaf49/Raze's releases and moves itself
+# onto a newer one as soon as no run is in flight.  The pure functions
+# below are the selftest's surface - no network, no disk, no Tk - and the
+# worker thread plus the --apply-update swap sit further down.
+
+UPDATE_REPO = "nawaf49/Raze"
+# One check at start-up, then every four hours.  GitHub allows 60
+# unauthenticated API calls an hour per IP, so this never gets near the
+# ceiling, and a 403 rate limit is just "try again later"
+UPDATE_POLL_S = 4 * 3600.0
+UPDATE_ASSET = "Raze.exe"
+# how long the new copy waits for the old process to leave the target file
+UPDATE_WAIT_S = 30.0
+# how long "Updating Raze" is on screen before the hand-over begins
+UPDATE_SHOW_MS = 900
+
+
+def parse_version(text):
+    """'v1.17', '1.17.0', ' 1.17 ' -> (1, 17, 0); anything else -> None.
+
+    A tag that will not parse is never treated as newer - an unknown
+    shape must not be able to trigger a mandatory update.
+    """
+    if not isinstance(text, str):
+        return None
+    s = text.strip()
+    if s[:1] in ("v", "V"):
+        s = s[1:]
+    if not s:
+        return None
+    parts = s.split(".")
+    out = []
+    for p in parts:
+        if not p.isdigit():
+            return None
+        out.append(int(p))
+    if not out:
+        return None
+    return tuple(out)
+
+
+def update_is_newer(tag, current=APP_VERSION):
+    """True only when the release tag is strictly newer than current."""
+    new, cur = parse_version(tag), parse_version(current)
+    if new is None or cur is None:
+        return False
+    n = max(len(new), len(cur))
+    new += (0,) * (n - len(new))
+    cur += (0,) * (n - len(cur))
+    return new > cur
+
+
+def update_release(payload):
+    """Pull what the updater needs out of one GitHub release JSON object.
+
+    Returns {"tag", "url", "digest"}; any field may be None.  Both the
+    asset URL and the sha256 digest are required to apply - GitHub
+    publishes the digest as "sha256:<hex>" on every asset - so a release
+    missing either is simply not applicable yet and gets retried.
+    """
+    info = {"tag": None, "url": None, "digest": None}
+    try:
+        if not isinstance(payload, dict):
+            return info
+        tag = payload.get("tag_name")
+        info["tag"] = tag if isinstance(tag, str) and tag else None
+        for asset in (payload.get("assets") or []):
+            if not isinstance(asset, dict):
+                continue
+            if asset.get("name") != UPDATE_ASSET:
+                continue
+            url = asset.get("browser_download_url")
+            info["url"] = url if isinstance(url, str) and url else None
+            digest = asset.get("digest")
+            if isinstance(digest, str) and digest.lower().startswith("sha256:"):
+                hexpart = digest.split(":", 1)[1].strip().lower()
+                if hexpart:
+                    info["digest"] = hexpart
+            break
+    except Exception:
+        pass
+    return info
+
+
+def update_download_path():
+    """Where the verified copy waits: one fixed file in %TEMP%.
+
+    One path, never a per-version one, so a machine that updates for
+    years accumulates exactly one file (hard rule 3: capped caches), and
+    it never sits beside the exe the updater is about to replace.
+    """
+    base = (os.environ.get("TEMP") or os.environ.get("TMP")
+            or os.environ.get("LOCALAPPDATA") or ".")
+    return os.path.join(base, "Raze-update.exe")
+
+
+def update_plan():
+    """Read-only: everything an update would touch, without touching it.
+
+    The selftest asserts on this; nothing here writes, downloads or
+    spawns.  A dev run (no frozen exe) is disabled entirely - only a
+    shipped Raze.exe ever checks for updates.
+    """
+    exe = running_exe()
+    return {
+        "enabled": bool(exe),
+        "repo": UPDATE_REPO,
+        "target": exe or "",
+        "download": update_download_path(),
+        "asset": UPDATE_ASSET,
+        "poll_s": UPDATE_POLL_S,
+        "version": APP_VERSION,
+        "tag": "v%s" % APP_VERSION,
+    }
+
+
+def fetch_latest_release():
+    """Ask GitHub for the latest release.  (info, error); never raises.
+
+    No internet, a rate limit or a bad body all come back as an error
+    string and the caller simply tries again on the next poll - being
+    mandatory never means being unusable offline.
+    """
+    import urllib.request
+    url = "https://api.github.com/repos/%s/releases/latest" % UPDATE_REPO
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "Raze-updater",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = resp.read()
+        payload = json.loads(body.decode("utf-8", "replace"))
+    except Exception as e:
+        return update_release(None), str(e) or "no connection"
+    return update_release(payload), ""
+
+
+def download_update(url, digest):
+    """Fetch the asset into %TEMP% and verify it against the digest.
+
+    Returns (path, "") on success, (None, error) otherwise.  A mismatched
+    or unreadable file is deleted: an exe that did not verify is never
+    left behind where the apply step could find it.
+    """
+    import hashlib
+    import urllib.request
+    dest = update_download_path()
+    try:
+        req = urllib.request.Request(url, headers={
+            "Accept": "application/octet-stream",
+            "User-Agent": "Raze-updater",
+        })
+        h = hashlib.sha256()
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            with open(dest, "wb") as fh:
+                while True:
+                    chunk = resp.read(1024 * 256)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    h.update(chunk)
+        if h.hexdigest().lower() != (digest or "").lower():
+            raise ValueError("checksum mismatch")
+    except Exception as e:
+        try:
+            if os.path.exists(dest):
+                os.remove(dest)
+        except OSError:
+            pass
+        return None, str(e) or "download failed"
+    return dest, ""
+
+
+def _wait_pid_exit(pid, timeout_s=UPDATE_WAIT_S):
+    """Block until the old process is gone. True if it left in time."""
+    if pid <= 0:
+        return True
+    try:
+        # SYNCHRONIZE on the old process: WaitForSingleObject signals the
+        # moment it exits, so this never busy-polls the PID number
+        PROCESS_SYNCHRONIZE = 0x00100000
+        handle = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_SYNCHRONIZE, False, int(pid))
+        if not handle:
+            return True            # cannot open it: it is already gone
+        try:
+            result = ctypes.windll.kernel32.WaitForSingleObject(
+                handle, int(timeout_s * 1000))
+            return result == 0     # WAIT_OBJECT_0 = exited
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    except Exception:
+        return True
+
+
+def do_apply_update(target, old_pid):
+    """Replace target with this file and start it again.
+
+    Runs inside the freshly downloaded copy (`--apply-update`), before
+    the single-instance mutex, while the old process is on its way out.
+    Windows locks a running image, so the old PID must be gone before
+    the bytes move; the copy lands as target.new and is swapped in with
+    os.replace, which is atomic - a failure leaves the old file exactly
+    as it was and Raze starts from it instead of vanishing.
+
+    Returns (ok, error). Never touches %APPDATA%\\Raze (hard rule 1) and
+    never touches Tk: no window exists this early in startup.
+    """
+    import shutil
+    import subprocess
+    if not getattr(sys, "frozen", False):
+        # only a shipped exe can ever be an update payload; a dev run
+        # must never copy python.exe over the source tree
+        return False, "not frozen"
+    if not target or not os.path.isfile(target):
+        return False, "no target"
+    if not _wait_pid_exit(old_pid):
+        # the old copy is still running; leave everything alone and let
+        # its own retry-on-next-poll logic pick the update up again
+        return False, "old copy still running"
+    staged = target + ".new"
+    try:
+        # copying *from* this running image is allowed - only renaming or
+        # deleting it is not - and the old target is unlocked by now
+        shutil.copyfile(sys.executable, staged)
+        os.replace(staged, target)
+    except Exception as e:
+        try:
+            if os.path.exists(staged):
+                os.remove(staged)
+        except OSError:
+            pass
+        # the old file survived; restart it so the user is never left
+        # without a running Raze because an update failed
+        try:
+            subprocess.Popen([target],
+                             cwd=os.path.dirname(target) or None,
+                             creationflags=0x00000008 | 0x00000200)
+        except Exception:
+            pass
+        return False, str(e) or "replace failed"
+    # Settings > Apps reads DisplayVersion from the uninstall key; open it
+    # only if it already exists - CreateKeyEx would invent an entry for a
+    # portable copy that never installed, and that is not ours to add
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY,
+                            0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "DisplayVersion", 0, winreg.REG_SZ,
+                              APP_VERSION)
+    except OSError:
+        pass
+    try:
+        subprocess.Popen([target],
+                         cwd=os.path.dirname(target) or None,
+                         creationflags=0x00000008 | 0x00000200)
+    except Exception:
+        return False, "restart failed"
+    # the temp copy cannot delete the image it is running from - Windows
+    # refuses that every time - so a detached cmd waits for this process
+    # to leave, then clears the download up.  Same pattern do_uninstall
+    # uses for the installed copy, and it never touches %APPDATA%\Raze
+    me = sys.executable
+    if os.path.abspath(me) != os.path.abspath(target):
+        cmd = 'ping -n 3 127.0.0.1 >nul & del /f /q "%s"' % me
+        try:
+            subprocess.Popen(["cmd", "/c", cmd],
+                             creationflags=0x00000008 | 0x00000200)
+        except Exception:
+            pass                       # %TEMP% gets swept by Windows anyway
+    return True, ""
+
+
+# --------------------------------------------------------------------------- #
 #  Keystroke sender
 # --------------------------------------------------------------------------- #
 # Every key goes out through SendInput rather than keybd_event.  The legacy
@@ -1924,6 +2201,14 @@ class AutoTyper:
         # (ok, error) from a running install, set by the worker thread and
         # consumed by the heartbeat - the thread boundary rule again
         self._install_done = None
+        # auto-updater: the verified new copy waiting for an idle moment,
+        # set by the checker thread and consumed by the heartbeat.  None
+        # until a newer release has been found AND downloaded; a plain
+        # attribute hand-off, exactly like _install_done
+        self._update_ready = None
+        # the checker thread's wake-up signal, so closing the app stops it
+        # without waiting out a whole poll interval
+        self._update_stop = threading.Event()
         self.cfg = self._load_config()
         self._tab = "typer"
         self._views = {}
@@ -3462,6 +3747,96 @@ class AutoTyper:
                 self._install_done = (False, str(e))
         threading.Thread(target=work, name="install", daemon=True).start()
 
+    def _update_start(self):
+        """Launch the auto-update checker. Dev runs never check.
+
+        The thread does every byte of I/O and never touches Tk: it finds
+        a newer release, downloads and verifies it, then parks the ready
+        file in _update_ready for the heartbeat to apply at the next
+        moment no run is in flight.
+        """
+        plan = update_plan()
+        if not plan["enabled"]:
+            return
+
+        def work():
+            # one check at startup, then every poll interval; a failure
+            # (offline, rate-limited) is silent and simply retried - the
+            # app runs normally either way
+            while not self._update_stop.is_set():
+                try:
+                    info, err = fetch_latest_release()
+                    if (not err and info["url"] and info["digest"]
+                            and update_is_newer(info["tag"])):
+                        path, derr = download_update(info["url"],
+                                                     info["digest"])
+                        if path:
+                            # publish only the fully verified file; the
+                            # heartbeat applies it when the user's run
+                            # is over
+                            self._update_ready = path
+                            return
+                except Exception:
+                    pass
+                self._update_stop.wait(UPDATE_POLL_S)
+        threading.Thread(target=work, name="update", daemon=True).start()
+
+    def _update_apply(self):
+        """Hand over to the new copy: spawn it, then leave.
+
+        Runs on the Tk thread from the heartbeat, only ever when no run
+        exists (the heartbeat's gate), and only once.  The config is
+        saved first so nothing typed is lost; then the verified file is
+        launched with --apply-update and this process exits - the new
+        copy waits for this PID to die, swaps itself in over the target
+        and starts Raze again.  Nothing to click, nothing to decline.
+        """
+        path = self._update_ready
+        self._update_ready = None
+        if not path or not os.path.isfile(path):
+            return
+        # the one visible beat of the whole update: the status line reads
+        # UPDATING for a moment before the app hands itself over, so the
+        # swap never looks like a crash-and-restart
+        self._set_status("UPDATING", AMBER)
+
+        def hand_over():
+            # a run may have begun during the beat - the user's rule is
+            # absolute, so put the file back and let the gate re-fire
+            # the moment that run ends
+            if self.typing or self.arming:
+                self._update_ready = path
+                # the heartbeat's live-status block repaints the dot on
+                # its next tick; this just stops the stale word sitting
+                # there until it does
+                self._set_status("TYPING" if self.typing else "IDLE",
+                                 GREEN if self.typing else FAINT)
+                return
+            try:
+                self._save_config()
+            except Exception:
+                pass
+            try:
+                import subprocess
+                subprocess.Popen(
+                    [path, "--apply-update", running_exe(),
+                     str(os.getpid())],
+                    cwd=os.path.dirname(path) or None,
+                    creationflags=0x00000008 | 0x00000200)  # detached
+            except Exception:
+                # could not even start the swap - fall back to a normal
+                # close; the verified file stays put and the gate retries
+                # on the next tick, so a transient failure is not a lost
+                # mandatory update
+                self._update_ready = path
+                self._set_status("IDLE", FAINT)
+                return
+            try:
+                self.root.destroy()
+            except Exception:
+                pass
+        self.root.after(UPDATE_SHOW_MS, hand_over)
+
     def _clear_messages(self):
         if self._confirm("Clear pool",
                          "Remove every message from the pool?",
@@ -4018,6 +4393,18 @@ class AutoTyper:
                 self._confirm("Install failed", detail,
                               confirm_text="OK", cancel_text=None)
 
+        # auto-update: a verified new copy waits here for the first
+        # moment no run exists.  The gate is the user's rule - never in
+        # the middle of a run or a loop, applied the moment it ends -
+        # plus the opening sequence, so the swap never lands on a window
+        # still assembling itself.  typing stays set through pause and a
+        # tab-in stop, so one flag covers every way a session is alive
+        if (getattr(self, "_update_ready", None)
+                and not self.typing and not self.arming
+                and not self._start_requested
+                and getattr(self, "_intro_done", False)):
+            self._update_apply()
+
         if self._start_requested:
             self._start_requested = False
             if not self.typing:
@@ -4168,6 +4555,9 @@ class AutoTyper:
         """Save everything and leave."""
         try:
             self.stop_event.set()
+            # wake the update checker so it leaves with the app instead
+            # of sleeping out the rest of its poll interval
+            self._update_stop.set()
             self.typing = False
             self._history_dirty = False
             self._save_config()
@@ -4235,6 +4625,20 @@ if __name__ == "__main__":
         root.destroy()
         sys.exit(0)
 
+    if "--apply-update" in sys.argv:
+        # the freshly downloaded copy, spawned by the old one just before
+        # it exits.  Before acquire_single_instance, exactly like
+        # --install: it must never contend for the mutex with a live app,
+        # and it has no window - the swap is pure file work
+        try:
+            i = sys.argv.index("--apply-update")
+            target = sys.argv[i + 1] if i + 1 < len(sys.argv) else ""
+            old_pid = int(sys.argv[i + 2]) if i + 2 < len(sys.argv) else 0
+        except (ValueError, IndexError):
+            target, old_pid = "", 0
+        ok, err = do_apply_update(target, old_pid)
+        sys.exit(0 if ok else 1)
+
     if "--install" in sys.argv:
         # before acquire_single_instance on purpose: an install runs once,
         # must not be told "another copy is running", and must never
@@ -4271,6 +4675,11 @@ if __name__ == "__main__":
 
     root = ctk.CTk()
     app = AutoTyper(root)
+
+    # the mandatory auto-update check: startup, then every poll interval,
+    # on its own thread - it only ever sets _update_ready, which the
+    # heartbeat applies once no run is in flight
+    app._update_start()
 
     # the one-time install question, asked after the opening sequence has
     # finished - polling _intro_done first, then one settled beat, so the

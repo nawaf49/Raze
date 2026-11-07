@@ -72,7 +72,7 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 110 headless checks, run via `Raze.exe --selftest` |
+| `selftest.py` | 128 headless checks, run via `Raze.exe --selftest` |
 | `pause_and_toast.py` | 56 checks: pause/resume/toast routing, a tab-in stop continued by the resume key and begun again by the start key, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
 | `layout_check.py` | 25 checks: the window fits the work area, the uptime on the status line, the four keycaps, the hotkeys card and button hover backgrounds, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
@@ -605,6 +605,70 @@ once, on first run. Per-user throughout: no admin, no UAC, no second file.
   `textengine` has no newline handling, and a longer line would be
   ellipsized by the artwork — never cut a word mid-way in a dialog either.
 
+## Auto-updater
+
+Mandatory, and settled with the user in his own words: *"on startup and
+24/7 but if it finds one it shouldn't update if the user is running a loop
+or is in a run. as soon as the run finishes it should auto update. it
+constantly checks."* Every copy watches `nawaf49/Raze`'s releases and moves
+itself onto a newer one with nothing to click and nothing to decline.
+
+- **The checker is a daemon thread, never Tk.** Started by
+  `AutoTyper._update_start()` from `__main__` (after the window exists, so
+  `_update_stop` already exists), it checks once at start-up and then every
+  `UPDATE_POLL_S` (4 h — GitHub allows 60 unauthenticated API calls an hour
+  per IP, so this never gets near the ceiling). It only ever sets
+  `_update_ready`, the same plain-attribute hand-off as `_install_done`,
+  and `_on_close` sets `_update_stop` so it leaves with the app. **A dev
+  run never checks**: `update_plan()["enabled"]` is false unless
+  `running_exe()` names a frozen exe.
+- **Offline is the ordinary case, not a failure.** No internet, GitHub down
+  or a 403 rate limit all come back as an error string from
+  `fetch_latest_release()` (which never raises), the app runs normally, and
+  the next poll tries again. Mandatory means no *skipping* an available
+  update — never that Raze stops working without a network.
+- **Only a strictly newer, fully verifiable release counts.**
+  `update_is_newer(tag)` compares parsed versions (unparseable → never
+  newer, so a weird tag can't trigger a swap), and `update_release()`
+  requires *both* the `Raze.exe` asset URL and GitHub's `sha256:` digest —
+  a release missing either is simply not applicable yet and gets retried.
+  `download_update()` streams to one fixed file (`%TEMP%\Raze-update.exe` —
+  one path forever, a capped cache by construction) and **deletes it on any
+  digest mismatch**: an exe that did not verify is never left where the
+  apply step could find it.
+- **The gate lives in `_tick_inner`.** `_update_ready` is consumed only
+  when `not typing and not arming` (`typing` stays set through pause and a
+  tab-in stop, so one flag covers every way a session is alive — a loop
+  included) and `_intro_done` is set. Then `_update_apply()` puts
+  `UPDATING`/amber on the status line, waits `UPDATE_SHOW_MS` (900 ms) —
+  the one visible beat of the whole update — re-checks the run gate at the
+  moment of hand-over (a run may have started during the beat; if so the
+  file goes back into `_update_ready` and the gate re-fires when that run
+  ends), saves the config, spawns the verified file with
+  `--apply-update <target> <old_pid>` detached and destroys the window.
+- **`--apply-update` runs before `acquire_single_instance`** — like
+  `--install`, it must never contend for the mutex with a live app — and
+  has no window: `do_apply_update()` is pure file work. It waits for the
+  old PID with `OpenProcess(SYNCHRONIZE)` + `WaitForSingleObject` (never a
+  PID-number poll; `UPDATE_WAIT_S` caps it), copies itself to
+  `target + ".new"` and swaps with `os.replace` — atomic, so a failure
+  leaves the old file exactly as it was. It then **reopens the uninstall
+  key with `OpenKey`, never `CreateKeyEx`** — creating one would list a
+  portable copy in Settings > Apps that never chose to install — writes
+  the new `DisplayVersion`, starts the target again, and hands its own
+  deletion to a detached `cmd` (a running image cannot delete itself; same
+  pattern as `do_uninstall`). If anything fails it restarts the *old*
+  target, so a failed update never leaves the user without a running Raze.
+- **It replaces the running file in place** — installed or portable: the
+  Start Menu and Desktop shortcuts already point at that exact path, so
+  the swap needs no shortcut or registry path surgery at all. The config
+  profile `%APPDATA%\Raze` is never touched (hard rule 1), and nothing in
+  the update path opens a Tk window of its own.
+- **A harness must never call `do_apply_update`** — it rewrites the exe on
+  disk and spawns processes. `selftest`'s update section asserts on
+  `parse_version()`, `update_is_newer()`, `update_release()`,
+  `update_plan()` and `update_download_path()` only (18 checks).
+
 ## Testing protocol
 
 **Strictly non-intrusive.** The user is often playing a game while a change is
@@ -615,11 +679,12 @@ being verified.
 - Never fire a live toast during testing. Validate the struct and the API
   return codes instead, and **ask before** showing one.
 - **Never call `do_install` / `do_uninstall` from a harness** — they write
-  to the tester's machine (registry key, shortcuts, a copied exe). Assert
-  on the read-only surface instead: `install_plan()` computes every path an
-  install would touch without touching it, and `install_prompt_needed()`
-  is pure. Same for `_create_shortcut` — never point it at a real folder
-  from a test.
+  to the tester's machine (registry key, shortcuts, a copied exe). The same
+  goes for `do_apply_update`: it rewrites the exe on disk and spawns
+  processes. Assert on the read-only surface instead: `install_plan()`
+  computes every path an install would touch without touching it,
+  `install_prompt_needed()` and `update_plan()` are pure. Same for
+  `_create_shortcut` — never point it at a real folder from a test.
 - Harnesses that build a real `AutoTyper` must set
   `A.reduce_motion_enabled = lambda: True` and re-apply `root.attributes("-alpha", 0.0)`
   **after** construction, and must set `A.rpcmod.enabled = False` — otherwise
@@ -879,4 +944,5 @@ Do not add these without asking.
   at the user's request. Topic closed.
 - **Error log** — there is none. `print("Typing error:", e)` in the `--windowed`
   exe goes nowhere. The user was offered a log and did not take it.
-- **Auto-updater, cloud sync** — rejected. This is a local tool.
+- **Cloud sync** — rejected. This is a local tool. (The auto-updater is no
+  longer absent — see *Auto-updater*.)
