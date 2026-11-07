@@ -265,7 +265,7 @@ HISTORY_KEEP = 200
 
 # the shipped version - Settings > Apps and the file's Properties both read
 # it.  Bump it together with version_info.txt whenever a release ships.
-APP_VERSION = "1.16"
+APP_VERSION = "1.17"
 
 # nav tabs: (label, key)
 TABS = (("Typer", "typer"), ("Hotkeys", "hotkeys"),
