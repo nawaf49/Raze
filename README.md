@@ -25,7 +25,8 @@ Nothing to install, no folder to keep around.
 | `F9` | Stop |
 
 Tab over to your app first, then press `F8`. Raze won't start while its own
-window is in front, and it stops itself if you tab back in.
+window is in front, and it stops itself if you tab back in. When that
+happens, `F7` continues that same run and `F8` starts a new one.
 
 ## What it does
 
@@ -40,10 +41,15 @@ one at a time, pressing Enter after each one.
 - Each of the four keys can be changed on the Hotkeys tab.
 - Pause keeps your counters and stops the clock. `F7` picks up where you
   left off, and `F9` ends the session.
+- Counters never get cut off. When a number is too long for its box, Raze
+  draws it smaller instead of shortening it, so nothing ever ends in `...`
+  however long Raze runs.
 - Raze never types into itself. If it's the window in front it won't start,
   and it stops if you click back into it.
 - The History tab shows how many messages you sent each day, plus a total
   for all time.
+- The top bar shows how long Raze has been open. It keeps counting through
+  pauses and stops, and only starts over when you close Raze.
 - If Raze stops without you asking — the list ran out, typing failed, or you
   clicked back into Raze — you get a Windows notification. Not when you stop
   it yourself.
