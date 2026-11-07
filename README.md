@@ -13,7 +13,9 @@
 ## Download
 
 [Raze.exe](https://github.com/nawaf49/Raze/releases/latest) — grab it and run it.
-Nothing to install, no folder to keep around.
+The first time, Raze asks whether to install itself: it adds a shortcut to your
+Start Menu and shows up in Settings, where the Uninstall button removes it.
+Prefer not to? Say no and it keeps running from wherever you put it.
 
 ## Keys
 
@@ -33,6 +35,9 @@ happens, `F7` continues that same run and `F8` starts a new one.
 Raze takes a list of your messages and types them into whatever app is open,
 one at a time, pressing Enter after each one.
 
+- On first run Raze offers to install itself — a Start Menu shortcut and an
+  entry in Settings with a working Uninstall button. Your messages and
+  history stay in your own folder either way.
 - Put your messages in the box, one per line. Load them from a `.txt` file,
   save them back, shuffle them, or clear them.
 - Choose how many seconds pass between messages, and how many times Raze
