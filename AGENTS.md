@@ -555,19 +555,34 @@ once, on first run. Per-user throughout: no admin, no UAC, no second file.
   running file already *is* the installed copy.
 - **What an install writes**, all computed read-only by `install_plan()`:
   a copy at `%LOCALAPPDATA%\Programs\Raze\Raze.exe`; `Raze.lnk` in the
-  Start Menu and on the Desktop; and the HKCU
+  Start Menu's **Programs** folder (`CSIDL_PROGRAMS`) and on the Desktop;
+  and the HKCU
   `Software\Microsoft\Windows\CurrentVersion\Uninstall\Raze` key that
   Settings > Apps reads — DisplayName, DisplayIcon, DisplayVersion
   (`APP_VERSION`), UninstallString `"<target>" --uninstall`, EstimatedSize.
   The shell folders come from `SHGetFolderPathW`, not from environment
-  variables, so a OneDrive-redirected Desktop lands where Explorer puts it.
+  variables, so a OneDrive-redirected Desktop lands where Explorer puts it —
+  and `CSIDL_STARTMENU` (the root, one level above Programs) is precisely
+  the wrong folder: Windows lists apps only from `Programs`, so a link in
+  the root is invisible. The selftest asserts the full
+  `Start Menu\Programs\Raze.lnk` suffix, not the words "Start Menu",
+  because the looser check passed over that exact bug.
 - **How it is built.** `_create_shortcut` calls the IShellLinkW vtable by
-  hand through ctypes (QI/AddRef/Release at slots 0–2, SetDescription 7,
-  SetWorkingDirectory 9, SetIconLocation 17, SetPath 19, then
-  IPersistFile::Save at 6 after a QueryInterface) because pywin32 would be
-  a new dependency — hard rule 6. `make_shortcut.py` still uses pywin32;
-  it is a dev script with hardcoded paths and never ships. The registry
-  goes through stdlib `winreg`.
+  hand through ctypes, because pywin32 would be a new dependency — hard
+  rule 6. Two things about it were settled the hard way, on the first live
+  install: (1) an interface pointer points at the object, whose first field
+  is lpVtbl, so the vtable array is **one deref further on** — reading
+  slots straight off the object hands back its data fields, and calling
+  one is an access violation at the very first call (that is what broke
+  the first real `Install` click); (2) the slots are QI/AddRef/Release
+  0–2, SetDescription 7, SetWorkingDirectory 9, SetIconLocation 17,
+  **SetPath 20** — index 19 is `Resolve`, which answers S_OK and leaves
+  the target empty, so the index was proven by reading the written `.lnk`
+  back through WScript.Shell, never from memory. IPersistFile's Save is 6
+  after a QueryInterface for its IID. `make_shortcut.py` still uses
+  pywin32 — which is not even installed on this machine, so it cannot run
+  either; it is a dev script with hardcoded paths and never ships. The
+  registry goes through stdlib `winreg`.
 - **The thread rule holds.** `do_install` runs on a worker thread (files
   and registry are not Tk work) and never touches Tk: it only sets
   `_install_done = (ok, err)`, and `_tick_inner` consumes it first thing —

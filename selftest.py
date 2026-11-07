@@ -913,15 +913,16 @@ def run():
                                                           "Raze.exe")
                            and plan["target"] == A.install_exe_path(),
                            plan["target"])
-    failures += not _check("two shortcuts: Start Menu and Desktop",
-                           len(plan["links"]) == 2
-                           and all(link.endswith(A.INSTALL_LINK_NAME)
-                                   for link in plan["links"])
-                           and any("Start Menu" in link
-                                   for link in plan["links"])
-                           and any("Desktop" in link
-                                   for link in plan["links"]),
-                           str(plan["links"]))
+    failures += not _check(
+        "two shortcuts: Start Menu\\Programs and Desktop",
+        len(plan["links"]) == 2
+        and all(link.endswith(A.INSTALL_LINK_NAME) for link in plan["links"])
+        and any(link.endswith(os.path.join("Start Menu", "Programs",
+                                           A.INSTALL_LINK_NAME))
+                for link in plan["links"])
+        and any(link.endswith(os.path.join("Desktop", A.INSTALL_LINK_NAME))
+                for link in plan["links"]),
+        str(plan["links"]))
     failures += not _check("the uninstall entry names --uninstall",
                            plan["uninstall_string"]
                            == '"%s" --uninstall' % plan["target"]

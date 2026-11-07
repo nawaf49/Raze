@@ -502,8 +502,11 @@ INSTALL_LINK_NAME = "Raze.lnk"
 INSTALL_DESC = "Raze - type anything automatically"
 # csidl values Explorer itself resolves: a Desktop redirected by OneDrive
 # does not sit at %USERPROFILE%\Desktop, and guessing from environment
-# variables gets that wrong
-CSIDL_STARTMENU = 0x000B
+# variables gets that wrong.  CSIDL_PROGRAMS is the Start Menu's *Programs*
+# subfolder on purpose - CSIDL_STARTMENU is its root, and a .lnk written
+# there is not listed by Windows at all (the first live install did
+# exactly that: a perfect shortcut nobody could find)
+CSIDL_PROGRAMS = 0x0002
 CSIDL_DESKTOPDIRECTORY = 0x0010
 
 
@@ -596,7 +599,7 @@ def install_plan():
         os.path.expanduser("~"), "AppData", "Roaming")
     profile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
     start_menu = _shell_folder(
-        CSIDL_STARTMENU,
+        CSIDL_PROGRAMS,
         os.path.join(appdata, "Microsoft", "Windows",
                      "Start Menu", "Programs"))
     desktop = _shell_folder(CSIDL_DESKTOPDIRECTORY,
@@ -656,6 +659,21 @@ def _guid(text):
     return g
 
 
+def _vt(obj, index):
+    """Slot `index` of a COM object's vtable - the step easy to miss.
+
+    An interface pointer points at the object; the object's first field is
+    lpVtbl; the vtable itself lives one deref further on.  Reading slots
+    straight off the object returns its data fields instead, and calling
+    one is an access violation - which is exactly how the first live
+    install failed at SetDescription.
+    """
+    base = ctypes.cast(obj, ctypes.POINTER(ctypes.c_void_p))[0]
+    slots = ctypes.cast(ctypes.c_void_p(base),
+                        ctypes.POINTER(ctypes.c_void_p))
+    return slots[index]
+
+
 def _create_shortcut(link_path, target, workdir, icon, desc):
     """Write a .lnk through IShellLinkW - raw COM through ctypes, nothing else.
 
@@ -663,8 +681,10 @@ def _create_shortcut(link_path, target, workdir, icon, desc):
     carries it only because it is a dev script.  The shipped exe has to stay
     one self-contained file (hard rule 6), so the vtable is called by hand:
     IShellLinkW starts QI/AddRef/Release at 0, SetDescription is 7,
-    SetWorkingDirectory 9, SetIconLocation 17, SetPath 19; IPersistFile's
-    Save is 6 after a QueryInterface for its IID.
+    SetWorkingDirectory 9, SetIconLocation 17, SetPath 20 (19 is Resolve -
+    verified by reading the written link back, an index off by one saves a
+    link with no target in it at all); IPersistFile's Save is 6 after a
+    QueryInterface for its IID.
     """
     from ctypes import wintypes
 
@@ -693,11 +713,9 @@ def _create_shortcut(link_path, target, workdir, icon, desc):
         if hr != 0 or not link.value:
             raise OSError("CoCreateInstance failed (0x%08x)" % hr)
 
-        slots = ctypes.cast(link, ctypes.POINTER(ctypes.c_void_p))
-
         def fn(index, restype, *argtypes):
             proto = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)
-            return proto(slots[index])
+            return proto(_vt(link, index))
 
         HRESULT = ctypes.c_long
         if fn(7, HRESULT, ctypes.c_wchar_p)(link, desc) != 0:      # SetDescription
@@ -707,7 +725,7 @@ def _create_shortcut(link_path, target, workdir, icon, desc):
         if fn(17, HRESULT, ctypes.c_wchar_p, ctypes.c_int)(        # SetIconLocation
                 link, icon, 0) != 0:
             raise OSError("SetIconLocation failed")
-        if fn(19, HRESULT, ctypes.c_wchar_p)(link, target) != 0:   # SetPath
+        if fn(20, HRESULT, ctypes.c_wchar_p)(link, target) != 0:   # SetPath
             raise OSError("SetPath failed")
 
         persist = ctypes.c_void_p()
@@ -716,10 +734,9 @@ def _create_shortcut(link_path, target, workdir, icon, desc):
         if hr != 0 or not persist.value:
             raise OSError("QueryInterface IPersistFile failed (0x%08x)" % hr)
         try:
-            pslots = ctypes.cast(persist, ctypes.POINTER(ctypes.c_void_p))
             save = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p,
                                       ctypes.c_wchar_p,
-                                      wintypes.BOOL)(pslots[6])
+                                      wintypes.BOOL)(_vt(persist, 6))
             if save(persist, link_path, True) != 0:
                 raise OSError("IPersistFile::Save failed")
         finally:
@@ -727,9 +744,8 @@ def _create_shortcut(link_path, target, workdir, icon, desc):
     finally:
         if link.value:
             try:
-                slots = ctypes.cast(link, ctypes.POINTER(ctypes.c_void_p))
                 release = ctypes.WINFUNCTYPE(ctypes.c_long,
-                                             ctypes.c_void_p)(slots[2])
+                                             ctypes.c_void_p)(_vt(link, 2))
                 release(link)
             except Exception:
                 pass
