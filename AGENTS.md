@@ -657,24 +657,27 @@ open — the single-instance check reports honestly in both states.
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
 - **Exactly one release exists at a time.** When the next one ships, delete the
-  old: `gh release delete v1.14 --repo nawaf49/Raze --yes`. The user's rule — a
+  old: `gh release delete v1.15 --repo nawaf49/Raze --yes`. The user's rule — a
   visitor sees one clear download, never a menu of old versions. The private
-  repo's git log is the only remaining record of what v1.0–v1.13 contained.
-  **Current: v1.14.**
+  repo's git log is the only remaining record of what v1.0–v1.14 contained.
+  **Current: v1.15.**
 - **Exactly one *tag* too.** Deleting the release leaves its tag behind, and
   the Tags page would still advertise old versions:
-  `gh api -X DELETE repos/nawaf49/Raze/git/refs/tags/v1.14`. Check with
+  `gh api -X DELETE repos/nawaf49/Raze/git/refs/tags/v1.15`. Check with
   `gh api repos/nawaf49/Raze/tags --jq ".[].name"` — only the current one may
   answer. Never touch the current tag: it is what the release hangs on.
   (Public repo tags are pruned this way, so the Tags page shows one entry.)
 - Create it as a real release, not a draft; it becomes *Latest* on its own:
-  `gh release create v1.15 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
+  `gh release create v1.16 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
 - **Verify before publishing.** `Get-FileHash .\dist\Raze.exe -Algorithm SHA256`
-  must equal the digest GitHub reports for the uploaded asset; the SHA256 that
-  goes in the notes comes from that match, never from a build nobody re-checked.
-  Both sides are read back after publishing — `gh release view <tag>
-  --json assets --jq ".assets[].digest"`.
-  (v1.14: `3EBFDB2D71F7B5AFC891A1C5E370D50AC2AAD8B9533D8F3D523F7C0AD1E78BBE`
+  must equal the digest GitHub reports for the uploaded asset, read back after
+  publishing with `gh release view <tag> --json assets --jq ".assets[].digest"`.
+  The notes carry neither: since v1.15 the user has not wanted the SHA256 in
+  them ("what's the point of the sha56 idk what that is") and the feature list
+  was dropped too — "it's already written in the readme". The match is still
+  checked both ways on every ship; only the publication of it is gone.
+  (v1.15: `EC33A7261BC31391333732F7C3D8FC6D3B73EAB782C3132AE12158B021E628E3`
+  over 15,038,931 bytes; v1.14: `3EBFDB2D71F7B5AFC891A1C5E370D50AC2AAD8B9533D8F3D523F7C0AD1E78BBE`
   over 15,035,335 bytes; v1.13: `49F81E0A7652A4CBBC93ED25C4EA22C2B9E6544F43CA6F5B569A5AAA4C271620`
   over 14,997,700 bytes; v1.12: `C576CF2A16F059ED4C82D761B871BC1F2456F48B782E0755E6DAD9422F1FB2D2`
   over 14,988,741 bytes; v1.11: `B6A6DD62C09A7FF326EA63FE99DF15EB3C8BE763C93080E7F4B986D43E8CE0B1`
@@ -682,16 +685,12 @@ open — the single-instance check reports honestly in both states.
   over 14,983,806 bytes; v1.9: `3C362846C0A5DE061663DBF4FC3761AF9D731223E6EEF3B50D2757C10ADA6580`
   over 14,980,962 bytes; v1.8: `DE203AE80D8C4AE1FD8A6D1FEE10C77A5618736152AE383A7F61049425D2E06C`
   over 14,978,521 bytes — all confirmed identical on both sides.)
-- **The notes format never changes** — same shape, same order, every time:
+- **The notes format never changes** — same shape, same order, every time.
+  Since v1.15 it is deliberately thin: the README carries the features, so
+  the notes repeat neither them nor a checksum:
 
 ```text
 Single file. No install, no folder to keep.
-
-**SHA256** `<hex>`
-
-## What's in it
-
-- <one line per user-visible feature>
 
 ## Hotkeys
 
@@ -707,7 +706,7 @@ and stops if you tab back in.
 ```
 
   Read the published one back with
-  `gh release view v1.14 --repo nawaf49/Raze --json body --jq .body`.
+  `gh release view v1.15 --repo nawaf49/Raze --json body --jq .body`.
 
 ## The public README
 
@@ -757,8 +756,16 @@ decisions — do not re-open one without asking:
 - **Badges** are `flat-square`, `color=141418` (`SURFACE_2`), label green
   `22c55e` for downloads and blue `2f6bff` for platform — the app palette, not
   shields.io's defaults.
-- **No checksum section.** Users do not verify hashes; the SHA256 lives in the
-  release notes only. Links point at `releases/latest`, never a pinned version.
+- **No checksum section, anywhere public.** Users do not verify hashes; since
+  v1.15 the SHA256 appears in neither the README nor the release notes — the
+  user's word: "what's the point of the sha56 idk what that is". It is still
+  verified on both sides at ship time (see *Releasing*), just not published.
+  Links point at `releases/latest`, never a pinned version.
+- **Every feature is listed — with exceptions.** When the uptime display and
+  the tab-back split were added (v1.15) the instruction was "add all the
+  features but don't include basic features like discord rpc": the README
+  carries everything a user does, but the Discord presence is deliberately
+  not among them. Do not add it without asking.
 - The logo file is `app_icon.png`, referenced relatively. The name is
   load-bearing — renaming it breaks the title line silently.
 
