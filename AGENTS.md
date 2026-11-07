@@ -748,28 +748,28 @@ open — the single-instance check reports honestly in both states.
   say the same number — the registry's DisplayVersion, the file's
   Properties > Details and the Settings > Apps entry all read them, and a
   mismatch ships visible in three places at once.
-- **The self-installer changes the pitch — ask before writing it.** The
-  first release *after* the install feature (this code) is the first one
-  where "Single file. No install, no folder to keep." is no longer true:
-  the exe now offers to install itself. The notes' opening line and the
-  public README's install wording both need new text for it — draft it,
-  show the user, do not ship the old pitch with a build that offers an
-  install. (The hotkeys table and the tab-out line below stay as they are.)
+- **The pitch changed at v1.16 — settled with the user, do not reopen it.**
+  The old first line "Single file. No install, no folder to keep." died with
+  the self-installer: the shipped line is now "Single file. First run offers
+  a one-click install — or run it from anywhere." and the public README's
+  Download section explains the first-run offer (plus a bullet in *What it
+  does*), wording approved verbatim before v1.16 went out. The hotkeys table
+  and the tab-out line under *Releasing* stay as they are.
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
 - **Exactly one release exists at a time.** When the next one ships, delete the
   old: `gh release delete v1.15 --repo nawaf49/Raze --yes`. The user's rule — a
   visitor sees one clear download, never a menu of old versions. The private
   repo's git log is the only remaining record of what v1.0–v1.14 contained.
-  **Current: v1.15.**
+  **Current: v1.16.**
 - **Exactly one *tag* too.** Deleting the release leaves its tag behind, and
   the Tags page would still advertise old versions:
-  `gh api -X DELETE repos/nawaf49/Raze/git/refs/tags/v1.15`. Check with
+  `gh api -X DELETE repos/nawaf49/Raze/git/refs/tags/v1.16`. Check with
   `gh api repos/nawaf49/Raze/tags --jq ".[].name"` — only the current one may
   answer. Never touch the current tag: it is what the release hangs on.
   (Public repo tags are pruned this way, so the Tags page shows one entry.)
 - Create it as a real release, not a draft; it becomes *Latest* on its own:
-  `gh release create v1.16 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
+  `gh release create v1.17 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
 - **Verify before publishing.** `Get-FileHash .\dist\Raze.exe -Algorithm SHA256`
   must equal the digest GitHub reports for the uploaded asset, read back after
   publishing with `gh release view <tag> --json assets --jq ".assets[].digest"`.
@@ -777,7 +777,8 @@ open — the single-instance check reports honestly in both states.
   them ("what's the point of the sha56 idk what that is") and the feature list
   was dropped too — "it's already written in the readme". The match is still
   checked both ways on every ship; only the publication of it is gone.
-  (v1.15: `EC33A7261BC31391333732F7C3D8FC6D3B73EAB782C3132AE12158B021E628E3`
+  (v1.16: `8D3301F9515E6D67117684A804756F9387AD28D69FC9CD05BE9C69657E7FB4C4`
+  over 15,061,800 bytes; v1.15: `EC33A7261BC31391333732F7C3D8FC6D3B73EAB782C3132AE12158B021E628E3`
   over 15,038,931 bytes; v1.14: `3EBFDB2D71F7B5AFC891A1C5E370D50AC2AAD8B9533D8F3D523F7C0AD1E78BBE`
   over 15,035,335 bytes; v1.13: `49F81E0A7652A4CBBC93ED25C4EA22C2B9E6544F43CA6F5B569A5AAA4C271620`
   over 14,997,700 bytes; v1.12: `C576CF2A16F059ED4C82D761B871BC1F2456F48B782E0755E6DAD9422F1FB2D2`
@@ -791,7 +792,7 @@ open — the single-instance check reports honestly in both states.
   the notes repeat neither them nor a checksum:
 
 ```text
-Single file. No install, no folder to keep.
+Single file. First run offers a one-click install — or run it from anywhere.
 
 ## Hotkeys
 
@@ -807,7 +808,7 @@ and stops if you tab back in.
 ```
 
   Read the published one back with
-  `gh release view v1.15 --repo nawaf49/Raze --json body --jq .body`.
+  `gh release view v1.16 --repo nawaf49/Raze --json body --jq .body`.
 
 ## The public README
 
