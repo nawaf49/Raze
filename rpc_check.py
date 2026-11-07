@@ -182,8 +182,11 @@ def run_exchange(label, message_mode):
     original = rpc._PIPES
     rpc._PIPES = [TEST_PIPE]
     presence = rpc.Presence(CLIENT_ID)
+    # the instant the app launched, an hour ago so the shape is the real
+    # one: this is what the timer counts from and it never moves again
+    started = int(time.time()) - 3600
     try:
-        presence.set_state("TYPING", 41, 12.5)
+        presence.set_state("TYPING", 41, started)
         presence.start()
         if not server.wait(lambda s: s.ready.is_set(), timeout=8.0):
             check("%s: the handshake was answered" % label, False,
@@ -199,7 +202,7 @@ def run_exchange(label, message_mode):
             check("%s: the handshake declares protocol v1" % label,
                   hs[0][1].get("v") == 1, hs[0][1].get("v"))
 
-        # first activity: typing, with the lifetime timer
+        # first activity: typing, with the timer running from app start
         got = server.wait(lambda s: len(activities(s)) >= 1)
         acts = activities(server)
         check("%s: a typing activity was pushed" % label, got and acts,
@@ -211,17 +214,17 @@ def run_exchange(label, message_mode):
             check("%s: state counts everything ever sent" % label,
                   a.get("state") == "41 messages sent", a.get("state"))
             start = (a.get("timestamps") or {}).get("start")
-            check("%s: the timer counts from the lifetime total" % label,
-                  isinstance(start, int)
-                  and abs(start - int(time.time() - 12.5)) <= 3, start)
+            check("%s: the timer runs from app start" % label,
+                  start == started, start)
             buttons = a.get("buttons") or []
             check("%s: the activity carries the repo button" % label,
                   len(buttons) == 1
                   and buttons[0].get("label") == rpc.BUTTON_LABEL
                   and buttons[0].get("url") == rpc.REPO_URL, buttons)
 
-        # paused: same count, no timer (a frozen clock would drift)
-        presence.set_state("PAUSED", 41, 12.5)
+        # paused: same count, and the timer stays - it is the app's own
+        # clock, so a pause must neither drop it nor move it
+        presence.set_state("PAUSED", 41, started)
         got = server.wait(lambda s: len(activities(s)) >= 2)
         acts = activities(server)
         check("%s: a paused activity replaced it" % label, got and len(acts) >= 2,
@@ -230,11 +233,12 @@ def run_exchange(label, message_mode):
             a = acts[1] or {}
             check("%s: details say Paused" % label,
                   a.get("details") == "Paused", a.get("details"))
-            check("%s: a paused session shows no timer" % label,
-                  "timestamps" not in a, a.get("timestamps"))
+            check("%s: a paused session keeps the timer" % label,
+                  (a.get("timestamps") or {}).get("start") == started,
+                  a.get("timestamps"))
 
         # idle with no session: still the lifetime total, never a session number
-        presence.set_state("IDLE", 1234, 99.0)
+        presence.set_state("IDLE", 1234, started)
         got = server.wait(lambda s: len(activities(s)) >= 3)
         acts = activities(server)
         check("%s: an idle activity replaced it" % label, got and len(acts) >= 3,
@@ -245,19 +249,17 @@ def run_exchange(label, message_mode):
                   a.get("details") == "Idle", a.get("details"))
             check("%s: the idle line is still the lifetime total" % label,
                   a.get("state") == "1234 messages sent", a.get("state"))
-            check("%s: an idle session shows no timer" % label,
-                  "timestamps" not in a, a.get("timestamps"))
+            check("%s: an idle session keeps the timer" % label,
+                  (a.get("timestamps") or {}).get("start") == started,
+                  a.get("timestamps"))
 
-        # a second session must pick the clock up, not start it over - this is
-        # the whole point of keeping the total instead of the session elapsed
-        presence.set_state("TYPING", 1240, 111.5)
+        # nothing may move the start: sessions come and go, the app does not
+        presence.set_state("TYPING", 1240, started)
         got = server.wait(lambda s: len(activities(s)) >= 4)
         acts = activities(server)
         later = (acts[3] or {}).get("timestamps") or {} if len(acts) >= 4 else {}
-        check("%s: a later session picks the clock up, not from zero" % label,
-              got and isinstance(later.get("start"), int)
-              and abs(later["start"] - int(time.time() - 111.5)) <= 3,
-              later.get("start"))
+        check("%s: the timer never moves" % label,
+              got and later.get("start") == started, later.get("start"))
 
         # Discord pings, and a presence that does not answer is one it drops
         ping_at = time.monotonic()
@@ -309,7 +311,7 @@ def run_disabled():
         p.start()
         check("a disabled presence never starts a thread",
               p._thread is None, p._thread)
-        p.set_state("TYPING", 1, 1.0)
+        p.set_state("TYPING", 1, int(time.time()) - 3600)
         p.stop()
         check("stopping a presence that never started is harmless",
               p._thread is None)

@@ -63,6 +63,27 @@ def main():
               abs(A.S - A._fit_scale(A._device_scale(), aw, ah)) < 1e-9,
               "%s (dpi %s)" % (A.S, A._device_scale()))
 
+        # the app's own clock lives on the status line, so it reads from
+        # every tab - and its box is pinned from the longest string it can
+        # ever print, which is what keeps a year of uptime away from both
+        # the tabs on its left and the status dot on its right
+        up = getattr(app, "uptime_text", None)
+        if up is None:
+            check("the uptime is on the status line", False, "missing")
+        else:
+            root.update_idletasks()
+            ux0, ux1 = up.winfo_x(), up.winfo_x() + up.winfo_width()
+            dot_x = app.status_dot.winfo_x()
+            tabs_right = max(x1 for _item, _x0, x1
+                             in app._tab_items.values()) * A.S
+            check("the uptime is on the status line without crowding it",
+                  up.winfo_ismapped() and up._text.startswith("UPTIME ")
+                  and ux1 <= dot_x and ux0 >= tabs_right
+                  and abs(up.winfo_y() - app.status_text.winfo_y()) <= 2,
+                  "text %r box %s..%s dot %s tabs %s y %s/%s"
+                  % (up._text, ux0, ux1, dot_x, tabs_right,
+                     up.winfo_y(), app.status_text.winfo_y()))
+
         print("keycaps (typer)")
         for attr, expect in (("key_cap_start", "F8"),
                              ("key_cap_pause", "F6"),

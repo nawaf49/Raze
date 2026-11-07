@@ -14,6 +14,7 @@ import io
 import os
 import sys
 import tempfile
+import time
 
 
 class _FakeKey:
@@ -569,6 +570,12 @@ def run():
             self._resume_requested = False
             self._worker_done = False
             self._tab_in_stop = False
+            # a tab-in stop waiting for the resume key, and the app's own
+            # clock - both are read by the heartbeat, so the stub carries them
+            self._tab_stopped = False
+            self._up_since = time.monotonic()
+            self._up_wall = time.time()
+            self.uptime_text = _State("UPTIME 00:00")
             self._worker_error = None
             self._session_start = None
             self._next_deadline = None
@@ -601,6 +608,15 @@ def run():
 
         def _resume(self):
             self.calls.append("resume")
+            # the dispatch above is the only part this stub owns - the
+            # behaviour is the app's own, so a check can drive the heartbeat
+            # and still assert on what a real resume did to the session
+            A.AutoTyper._resume(self)
+
+        def _launch(self):
+            # deliberately not recorded: the checks here are about which key
+            # answered, not about the window getting out of the way
+            pass
 
         def _set_status(self, *args):
             pass
@@ -653,6 +669,25 @@ def run():
     nothing._resume_requested = True
     failures += not _check("the resume key is silent when nothing is paused",
                            tick(nothing) == [], str(nothing.calls))
+
+    # a run the tab-in stop left waiting is still a session: the resume key
+    # carries it on where it stopped, counters and clock included - it is
+    # only the start key that begins again from the top
+    tabbed = _Tick(paused=False, typing=False)
+    tabbed._tab_stopped = True
+    tabbed.stats = {"sent": 7, "chars": 42, "elapsed": 13.0}
+    tabbed._resume_requested = True
+    tick(tabbed)
+    failures += not _check("the resume key wakes a tab-in stop",
+                           tabbed.calls == ["resume"]
+                           and tabbed.typing is True
+                           and tabbed._tab_stopped is False
+                           and tabbed.stats["sent"] == 7
+                           and tabbed.stats["chars"] == 42
+                           and abs(tabbed.stats["elapsed"] - 13.0) < 0.5
+                           and tabbed._session_start is not None,
+                           str((tabbed.calls, tabbed.typing, tabbed._tab_stopped,
+                                tabbed.stats, tabbed._session_start)))
 
     # start has to bail before it reads the pool, so an empty one cannot
     # raise a warning for a key that was meant to do nothing

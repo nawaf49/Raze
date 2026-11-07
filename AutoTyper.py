@@ -1468,10 +1468,12 @@ class AutoTyper:
         self.resume_key = "f7"
         self.messages = []
         self.stats = {"sent": 0, "chars": 0, "elapsed": 0.0}
-        # lifetime typing seconds, kept beside the session clock and stored in
-        # the config - the presence counts from this so its timer never starts
-        # over, however many sessions come and go
-        self._total_secs = 0.0
+        # the app's own clock: uptime from launch, which keeps running
+        # through every pause and stop and only resets when the app closes.
+        # _up_wall is the same instant as a fixed unix timestamp - the
+        # Discord timer counts from it and it never moves
+        self._up_since = time.monotonic()
+        self._up_wall = time.time()
         self._next_deadline = None
         self._session_start = None
         self._last_message = ""
@@ -1482,6 +1484,10 @@ class AutoTyper:
         # worker thread is not safe), and the reason the worker bailed out
         self._raze_hwnd = 0
         self._tab_in_stop = False
+        # a stop the user did not choose, waiting for the resume key: the
+        # session is still there, so resume continues it and start opens a
+        # fresh one instead
+        self._tab_stopped = False
         self._worker_error = None
         # the pause and resume requests raised by the hotkey thread and read
         # on the Tk thread - the only thing that crosses between the two
@@ -1747,6 +1753,19 @@ class AutoTyper:
         self.status_dot = BakedLabel(self.root, "\u25cf", size=13, color=FAINT)
         self.status_text = BakedLabel(self.root, "IDLE", size=10, weight="SemiBold",
                                       color=MUTED)
+        # How long the app has been open, on the status line so it reads from
+        # every tab.  It runs from launch through every pause and stop and
+        # only ever resets when the app closes.  The box is sized from the
+        # longest string the clock can print and pinned, with the words
+        # right aligned inside it, so a year of uptime grows away from the
+        # status dot instead of into it - and fit=True means it would rather
+        # draw smaller than overlap the tabs.
+        self.uptime_text = BakedLabel(self.root, "UPTIME 00:00", size=10,
+                                      weight="SemiBold", color=FAINT,
+                                      anchor="e", fit=True)
+        _art, up_dims = text_photo("UPTIME 999y 364d", 10, "SemiBold", FAINT,
+                                   0.0, False, True, None, None)
+        up_worst = (up_dims[0] + 2) / S
         self.github_btn = BakedButton(self.root, "Star on GitHub", self._open_github,
                                       size=10, weight="SemiBold", fill=TEXT,
                                       hover="#ffffff", color=INK, height=32)
@@ -1761,8 +1780,21 @@ class AutoTyper:
         sx = gx - 40 - sw
         self._anim(self.status_text, sx, 20, delay=INTRO_STAGGER_MS * 1.5,
                    dy=INTRO_DROP)
-        self._anim(self.status_dot, sx - 20, 20, delay=INTRO_STAGGER_MS * 1.5,
+        dot_x = sx - 20
+        self._anim(self.status_dot, dot_x, 20, delay=INTRO_STAGGER_MS * 1.5,
                    dy=INTRO_DROP)
+        # what is actually free between the tabs and the dot; the box takes
+        # the wider of the clock's worst case and that room, so growth can
+        # never land on either neighbour
+        tabs_right = max(x1 for _item, _x0, x1 in self._tab_items.values())
+        room = dot_x - 12 - tabs_right - 8
+        up_w = min(up_worst, room)
+        self.uptime_text.set_box(max_width=room)
+        # place -width is set once and _move only ever writes -x/-y, so the
+        # box stays put for the life of the window
+        self.root.tk.call("place", self.uptime_text._w, "-width", px(up_w))
+        self._anim(self.uptime_text, dot_x - 12 - up_w, 20,
+                   delay=INTRO_STAGGER_MS * 1.5, dy=INTRO_DROP)
 
     def _set_status(self, text, color):
         self._rpc_status = text
@@ -1858,6 +1890,9 @@ class AutoTyper:
             text_h = self.status_text.winfo_reqheight()
             dot_h = self.status_dot.winfo_reqheight()
             self.status_text.place_configure(y=by)
+            # the uptime reads on the same line, same size and weight, so it
+            # takes the status text's own offset
+            self.uptime_text.place_configure(y=by)
             # the dot is a bigger glyph - centre its artwork on the same axis
             self.status_dot.place_configure(y=by - (dot_h - text_h) / 2)
         except Exception:
@@ -2715,12 +2750,6 @@ class AutoTyper:
             for stamp, _message in self.history:
                 day = stamp[:10]
                 self.daily[day] = self.daily.get(day, 0) + 1
-        # absent from any config written before the presence existed, which is
-        # fine - it simply starts at zero and grows from there
-        try:
-            self._total_secs = float(c.get("total_secs") or 0.0)
-        except Exception:
-            self._total_secs = 0.0
         msgs = c.get("messages") or ["Hello there!", "How can I help you?", "Have a great day!"]
         self.editor.insert("1.0", "\n".join(msgs))
         self._update_pool_meta()
@@ -2754,7 +2783,6 @@ class AutoTyper:
             "random": self._random_pick,
             "history": [{"t": t, "m": m} for t, m in self.history[-HISTORY_KEEP:]],
             "daily": self.daily,
-            "total_secs": round(self._total_secs, 3),
         })
         try:
             write_config(self.cfg)
@@ -3196,6 +3224,11 @@ class AutoTyper:
         self._tab_in_stop = False
         if self._focus_refused():
             return
+        # a fresh start also disposes of a tab-in stop that was waiting for
+        # the resume key - the user has chosen to begin again instead.  It
+        # has to be cleared after the guard: refusing the start must leave
+        # the resumable session exactly where it was
+        self._tab_stopped = False
 
         # a fresh start always opens a new session - which is precisely what
         # pause exists so that stepping away does not have to cost
@@ -3270,14 +3303,24 @@ class AutoTyper:
         self.session_state.set_color(AMBER)
 
     def _resume(self):
-        if not self.paused:
+        # its own key, so it wakes what pause put to sleep *and* a run the
+        # tab-in stop left waiting - both are sessions that still exist and
+        # are asking to be carried on
+        if not (self.paused or self._tab_stopped):
             return
         # resuming starts typing, so it needs the guard starting takes
         if self._focus_refused():
             return
+        # the announcement this replaces - "switch to your app first, then
+        # press F7" - is answered by the key being pressed now
+        self._pending_toast = None
         self._tab_in_stop = False
+        self._tab_stopped = False
         self._worker_error = None
         self.paused = False
+        # stop cleared it; the run exists again from here
+        self.typing = True
+        self.arming = False
         self.stop_event.clear()
         # carry the clock on from where it was frozen rather than restarting it
         self._session_start = time.monotonic() - float(self.stats.get("elapsed", 0.0))
@@ -3290,6 +3333,10 @@ class AutoTyper:
         self.typing = False
         self.arming = False
         self.paused = False
+        # a stop is a choice: whatever was waiting to be resumed or announced
+        # is over, and F9 must not leave either behind
+        self._tab_stopped = False
+        self._pending_toast = None
         self.stop_event.set()
         self._session_start = None
         self._next_deadline = None
@@ -3517,10 +3564,11 @@ class AutoTyper:
             if self.typing and not self.paused:
                 self._pause()
 
-        # its own key, so pause can only pause and resume can only resume
+        # its own key, so pause can only pause and resume can only resume -
+        # and a run the tab-in stop left waiting is exactly what it is for
         if self._resume_requested:
             self._resume_requested = False
-            if self.paused:
+            if self.paused or self._tab_stopped:
                 self._resume()
 
         if self._worker_done:
@@ -3534,11 +3582,20 @@ class AutoTyper:
                 # outranks a pause: the run did not end by choice
                 self._tab_in_stop = False
                 self.paused = False
+                # freeze the clock first, the way pause does, so the session
+                # resume picks up is exact rather than a tick stale
+                if self._session_start:
+                    self.stats["elapsed"] = (time.monotonic()
+                                             - self._session_start)
                 self._stop()
+                # the session survives this stop - it is only waiting for
+                # the resume key, and _stop has just cleared the flag
+                self._tab_stopped = True
                 self._set_status("TAB OUT", AMBER)
                 self.session_state.set_text("Switch to your app first")
                 self.session_state.set_color(AMBER)
-                self._toast("Stopped - you switched back to Raze")
+                self._toast("Stopped - switch to your app first, then press "
+                            "%s to continue" % self.resume_key.upper())
             elif self.paused:
                 # the worker left because _pause asked it to
                 pass
@@ -3567,24 +3624,29 @@ class AutoTyper:
             loop_label.set_text(self._loop_text())
 
         if self._session_start and (self.typing or self.arming):
-            elapsed = time.monotonic() - self._session_start
-            # the lifetime total moves by exactly what the session moved by,
-            # so nothing is counted twice and a pause costs it nothing - pause
-            # nulls _session_start, so this block does not even run then
-            self._total_secs += elapsed - self.stats["elapsed"]
-            self.stats["elapsed"] = elapsed
+            # the session clock only - the app's own uptime above it never
+            # stops for a pause or a stop, it only resets on close
+            self.stats["elapsed"] = time.monotonic() - self._session_start
+
+        # the app's own clock: seconds since launch, through every pause and
+        # stop, until the app closes.  set_text is a no-op when the words
+        # have not changed, so this costs a string compare per tick
+        self.uptime_text.set_text("UPTIME " + _elapsed_text(time.monotonic()
+                                                            - self._up_since))
 
         self.tile_sent.set(str(self.stats["sent"]), GREEN if self.stats["sent"] else TEXT)
         self.tile_chars.set(str(self.stats["chars"]))
         self.tile_time.set(_elapsed_text(self.stats["elapsed"]))
 
-        # Hand the presence thread its three values.  It decides on its own
-        # whether anything is worth pushing to Discord, so this stays cheap
-        # enough to run on every heartbeat tick.
+        # Hand the presence thread its three values: the status line, the
+        # lifetime message count and the instant the app launched, which is
+        # what its timer counts from.  It decides on its own whether anything
+        # is worth pushing to Discord, so this stays cheap enough to run on
+        # every heartbeat tick.
         try:
             self.presence.set_state(self._rpc_status,
                                     sum(self.daily.values()),
-                                    self._total_secs)
+                                    self._up_wall)
         except Exception:
             pass
 

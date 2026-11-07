@@ -95,7 +95,9 @@ class Presence:
         self._lock = threading.Lock()
         self._status = "IDLE"
         self._lifetime = 0
-        self._total_secs = 0.0
+        # the instant the app launched, as a fixed unix timestamp: the timer
+        # Discord draws counts from here and it never moves again
+        self._started_at = 0
         self._stop = threading.Event()
         self._thread = None
         self._handle = None
@@ -107,12 +109,12 @@ class Presence:
     # ------------------------------------------------------------------ #
     #  the whole Tk-thread interface: three values, one lock, no I/O
     # ------------------------------------------------------------------ #
-    def set_state(self, status, lifetime, total_secs):
+    def set_state(self, status, lifetime, started_at):
         try:
             with self._lock:
                 self._status = status or "IDLE"
                 self._lifetime = int(lifetime or 0)
-                self._total_secs = float(total_secs or 0.0)
+                self._started_at = float(started_at or 0.0)
         except Exception:
             pass
 
@@ -195,7 +197,7 @@ class Presence:
         with self._lock:
             status = self._status
             lifetime = self._lifetime
-            total_secs = self._total_secs
+            started_at = self._started_at
 
         details = {"TYPING": "Typing",
                    "PAUSED": "Paused",
@@ -209,14 +211,14 @@ class Presence:
         activity = {"details": details, "state": state, "instance": False,
                     "buttons": [{"label": BUTTON_LABEL, "url": REPO_URL}]}
 
-        # Discord draws the timer itself from `start`.  `start` comes from the
-        # lifetime total, so a new session picks the clock up where the last
-        # one left it instead of starting over - which is the whole point.  It
-        # is handed over only while the clock is actually running: a frozen
-        # total would drift forward between pushes and snap back on each one,
-        # which is why a paused session shows no timer at all.
-        if status == "TYPING":
-            activity["timestamps"] = {"start": int(time.time() - total_secs)}
+        # Discord draws the timer itself from `start`, and `start` is the
+        # instant the app launched - one fixed timestamp, so the timer is the
+        # app's own uptime: it starts at zero when Raze opens and never
+        # resets for a pause or a stop, only when the app closes.  A fixed
+        # value also cannot drift between pushes, so every status carries it,
+        # idle and paused included.
+        if started_at:
+            activity["timestamps"] = {"start": int(started_at)}
         return activity
 
     # ------------------------------------------------------------------ #

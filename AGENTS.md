@@ -72,9 +72,9 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 98 headless checks, run via `Raze.exe --selftest` |
-| `pause_and_toast.py` | 46 checks: pause/resume/toast routing, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
-| `layout_check.py` | 24 checks: the window fits the work area, the four keycaps, the hotkeys card and button hover backgrounds, captures both tabs |
+| `selftest.py` | 99 headless checks, run via `Raze.exe --selftest` |
+| `pause_and_toast.py` | 56 checks: pause/resume/toast routing, a tab-in stop continued by the resume key and begun again by the start key, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
+| `layout_check.py` | 25 checks: the window fits the work area, the uptime on the status line, the four keycaps, the hotkeys card and button hover backgrounds, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `rpc.py` | Discord presence: named pipe over ctypes, its own thread |
 | `rpc_check.py` | 49 checks: the presence protocol against a fake local pipe |
@@ -158,7 +158,8 @@ down together, still sharp.
   and settles them in `_play_intro`. Its reduce-motion branch must settle
   them too, or users with "turn off unnecessary animations" on get a
   permanently 10–18 px offset interface.
-- `_align_nav` puts `● IDLE` on the GitHub button's line by reading
+- `_align_nav` puts `● IDLE` — and the uptime label beside it — on the
+  GitHub button's line by reading
   `winfo_rooty()` — but an **unmapped** widget reports 0, so a run that beat
   the first map computed `0 - rooty` and parked the status above the window
   where nothing could see it. It therefore retries (100 ms, at most 30
@@ -179,7 +180,7 @@ down together, still sharp.
 - **The scale audit.** `%TEMP%\opencode\res_audit.py <scale> [tab]` builds
   the app at a forced scale and reports glyph boxes taller than their room
   plus every mapped widget outside the client, per tab. Sweep 0.50–1.20
-  across `typer`/`hotkeys`/`history` and require `RESULT: CLEAN` on all 42
+  across `typer`/`hotkeys`/`history` and require `RESULT: CLEAN` on all 45
   lines after any layout change. (Above ~1.2 on this 1080p machine is a
   probe artifact: `RAZE_SCALE` bypasses the clamp and the screen cannot
   hold the window. `cfg_stack.py` beside it dumps the config card's
@@ -218,6 +219,16 @@ down together, still sharp.
   **design** width peaks *below* 100%: the font is `round(size*S)` and the
   tracking `round(1.1*S)`, neither of which shrinks in step with `S` —
   `MESSAGES SENT` wants 109.8 design px at `S=0.51` against 89 at `S=1.0`.
+- **The uptime label on the nav is boxed the same way.** `UPTIME <t>` sits
+  left of the status dot and reads on every tab, updated by the heartbeat
+  only when the string changes. Its box is pinned once — `place -width` of
+  `min(measured worst case, the room between the tabs and the dot)` — with
+  the artwork right aligned inside it (`anchor="e"`), so a clock growing
+  toward `UPTIME 999y 364d` moves *away* from the status dot and can never
+  reach the tabs; `fit=True` plus `set_box(max_width=room)` is the backstop
+  if the worst case ever outgrows the room. `_move` only writes `-x`/`-y`,
+  so the width set at build lasts for the life of the window, and
+  `_align_nav` gives it the status line's own `y`.
 - **The label's `bg` must always be the fill it is standing on.**
   `BakedButton._on_enter` lightens the pill's `fg_color`, but the artwork keeps
   the rest colour painted behind the glyphs — a stale rectangle that read as a
@@ -273,6 +284,15 @@ and it never competes with Tk for the GIL.
   at all to a paused session. The user was explicit — "the hotkeys aren't
   meant for each other". This is why `_start()` opens with a `paused` guard
   and why `_pause_requested` is no longer a toggle.
+- **After a tab-in stop the two keys answer different questions.** The
+  announcement names the resume key — "switch to your app first, then press
+  F7 to continue" — and that key continues the very session that stopped,
+  counters and clock included; F8 instead begins again from the top. F8's
+  `paused` guard does not cover this state, because a tab-in stop is not a
+  pause: `_start()` clears `_tab_stopped` only **after** `_focus_refused()`
+  passes, so a refused start leaves the resumable session exactly where it
+  was. F9 discards it — `_stop()` clears the flag and any announcement still
+  waiting for the screen to free up.
 - The listener must **never touch Tk**. It sets `_start_requested` /
   `_stop_requested` / `_pause_requested` / `_resume_requested` and the
   Tk-thread heartbeat consumes them. That is the only thread boundary in the
@@ -291,6 +311,13 @@ handed focus to".
 - Mid-run, `_typing_worker` re-checks **before every message, never during
   one**. If Raze is in front it sets `_tab_in_stop` and breaks, so a tab-back
   cannot dump keystrokes into our own message pool.
+- **A tab-in stop keeps the session.** The heartbeat freezes
+  `stats["elapsed"]` the way pause does, calls `_stop()`, and only then sets
+  `_tab_stopped = True` — `_stop()` clears it, so the order matters — before
+  writing the amber "Switch to your app first" and naming the resume key in
+  the toast. `_stop()` nulls `_session_start` but never touches `stats`, so
+  the numbers are still there for `_resume()` to carry on from; it must also
+  set `typing = True`, because the stop cleared it.
 
 ## Pause
 
@@ -305,7 +332,14 @@ Pause is not a lighter stop. Its entire value is that it keeps the session.
 - `_pause()` freezes `stats["elapsed"]` and nulls `_session_start`, so the
   heartbeat stops advancing the clock. `_resume()` restores
   `_session_start = now - elapsed` and picks up where it left off.
-- `_stop()` clears `paused`.
+- `_resume()` accepts **`paused or _tab_stopped`** — the two ways a session
+  can still exist without a worker — and returns before doing anything if
+  neither holds. Its guard sits before the flag is cleared, so a refused
+  resume leaves the session resumable.
+- `_stop()` clears `paused`, `_tab_stopped` and any pending announcement: a
+  stop is a choice, so nothing may outlive it waiting to be resumed or shown.
+  The heartbeat's tab-in branch sets `_tab_stopped` back straight after the
+  call, which is the only reason the order works.
 - **`_tick_inner` ordering is load-bearing.** `_pause_requested` must be
   consumed *before* `_worker_done`, because the flag hand-off only works if
   `paused` is already set when the worker reads it. `_resume_requested` sits
@@ -389,6 +423,9 @@ stalls spread over the first half second.
 
 Shown only for endings the user did not choose: pool ran out, worker error,
 tabbed back in. **Never** on F9, pause, or resume — they already know why.
+The tab-in one names the key that continues the run — "Stopped - switch to
+your app first, then press F7 to continue" — because that stop is not the
+end of the session.
 
 - `Shell_NotifyIconW` is exported by **shell32.dll, not user32.dll**. Every
   call here sits inside a `try/except`, so pointing at the wrong DLL was
@@ -407,7 +444,9 @@ tabbed back in. **Never** on F9, pause, or resume — they already know why.
   `TOAST_RETRY_S` (2 s) until the state is `QUNS_ACCEPTS_NOTIFICATIONS` (5).
   A failed query counts as allowed: never hold a notification hostage to a
   query that did not answer. `_start` clears any pending message — a new
-  session supersedes an announcement that is about to be out of date.
+  session supersedes an announcement that is about to be out of date — and
+  so do `_stop` (F9 discards the announcement with the session) and
+  `_resume` (the key it named has just been pressed).
 
 ## Discord presence
 
@@ -430,17 +469,19 @@ payload that is unpacked from scratch on every launch.
   reconnects every 5 s forever and does nothing in between. It pushes on
   change only, never more than once a second.
 - The Tk thread's entire interface is `set_state(status, lifetime,
-  total_secs)` — three values under one lock. The heartbeat feeds it once per
+  started_at)` — three values under one lock. The heartbeat feeds it once per
   tick; every byte of I/O happens on the presence thread.
-- **The timer never starts over.** It counts from `_total_secs`, the lifetime
-  twin of `stats["elapsed"]`, accumulated in `_tick_inner` by the same delta
-  the session clock moved and stored as `total_secs` in the config — so a new
-  session picks it up where the last one left it instead of returning to zero,
-  and a pause costs it nothing (pause nulls `_session_start`, so the
-  accumulating block does not even run). It is handed over only while the clock
-  actually runs: Discord draws it client-side from `start`, and a frozen total
-  would drift forward between pushes and snap back on each one, which is why a
-  paused session shows no timer at all.
+- **The timer is the app's uptime, and it never starts over.** `started_at`
+  is `_up_wall`, the unix timestamp of `__init__` — one fixed value, taken
+  once at launch beside the monotonic `_up_since` the in-app clock reads —
+  so Discord draws a timer that starts at zero when Raze opens and resets
+  only when the app closes: a pause, a stop or a new session moves it not at
+  all, and `total_secs` is gone from the code and the config with it. Being
+  fixed is also what makes it safe to send for *every* status, idle and
+  paused included: a value recomputed each push would drift forward between
+  pushes and snap back on each one, which is why a paused session used to
+  show no timer at all. It also means the activity dict only changes when
+  the status or the count does, so the push throttle still sees one shape.
 - The state line is **always the lifetime total** from `daily`, never the
   session's own count. The session card is the place for that number; a profile
   is a stranger's view, and the only number worth showing a stranger is the one
@@ -463,12 +504,13 @@ payload that is unpacked from scratch on every launch.
 
 `%APPDATA%\Raze\config.json`. Keys: `msg_interval`, `loop`, `random`,
 `start_key`, `stop_key`, `pause_key`, `resume_key`, `messages`, `history`,
-`daily`, `total_secs`.
+`daily`.
 
-- `total_secs` is **lifetime typing seconds** — the presence timer counts from
-  it, which is why that timer never starts over. It is absent from configs
-  written before the presence existed, and that is fine: it starts at zero and
-  grows from there.
+- `total_secs` used to be here: lifetime typing seconds, which the presence
+  timer counted from. The timer is the app's own uptime now (see *Discord
+  presence*), so nothing reads or writes it any more. A config that still
+  carries the key is left alone on save — never filter a file down to the
+  keys you know about.
 - `history` is a list of `{"t": "...", "m": "..."}`, capped at `HISTORY_KEEP`.
   Content and timestamps are **stored but never displayed** — the History tab
   shows day counts and a lifetime total only.
@@ -509,12 +551,15 @@ being verified.
   windows do not composite, so stay on-screen at alpha 0.
 - `selftest.py` stubs the app with a `_Worker` class that replaces `_type_text`.
   New worker behaviour needs new fields on that stub or it raises silently
-  inside the worker's `except`.
+  inside the worker's `except`. The same goes for `_Tick`, the stub
+  `_tick_inner`/`_start`/`_resume` are driven on: anything those methods read
+  — the uptime label, `_up_since`, `_tab_stopped` — has to exist on it, and
+  out there an `AttributeError` is not swallowed.
 - **Four harnesses are committed** next to it, and all of them are
   non-intrusive by construction: `send_enter`, `notify_balloon` and
   `is_foreground` are replaced with recorders, the window is built at alpha 0,
   the presence seam is off, and nothing is ever typed, surfaced or focused.
-  - `pause_and_toast.py` — 46 checks. The session card carries its four
+  - `pause_and_toast.py` — 56 checks. The session card carries its four
     counters, the `LAST SENT` box and the loop counter (an orphaned block once
     left the card's body unreachable after a `return`, and every other suite
     stayed green because the heartbeat swallows the `AttributeError` that
@@ -526,18 +571,26 @@ being verified.
     and sent once the screen frees up; then, under a run already under way,
     an interval shortened inside its own wait, a selection-mode flip through
     the real checkbox, a pool edit through the real binding and a Loop change
-    through its setter all land on that same run. It reconfigures `sys.stdout` with
+    through its setter all land on that same run. A tab-in stop is then
+    driven end to end: the toast names the resume key and the session waits,
+    the resume key continues it with the counters intact, tabbing in again
+    stops it a second time, the start key zeroes the counters for a fresh
+    session, and F9 after all of that stays silent. It reconfigures
+    `sys.stdout` with
     `errors="replace"`: the `∞` glyph cannot be encoded on a cp1252 console
     and one raised `print` breaks the `after()` chain, stalling the harness.
-  - `layout_check.py` — 24 checks. The window fits the work area's width and
+  - `layout_check.py` — 25 checks. The window fits the work area's width and
     height with its frame, the client area is the design at the clamped scale,
-    the four keycaps read `F8`/`F6`/`F7`/`F9` and fit their frames, the hotkeys
+    the uptime sits on the status line between the tabs and the dot without
+    crowding either, the four keycaps read `F8`/`F6`/`F7`/`F9` and fit their
+    frames, the hotkeys
     card still fits its tab at 348 px, every button's label sits on the fill it
     is actually looking at (rest **and** hover), and it captures `typer.png` /
     `hotkeys.png` for the eye to check.
   - `rpc_check.py` — 49 checks. The presence protocol end to end: handshake,
-    all three activity shapes, the repo button, the proof that a later session
-    picks the clock up rather than restarting it, ping/pong, the push throttle,
+    all three activity shapes, the repo button, the timer that runs from app
+    start through every status — paused and idle included — and never moves,
+    ping/pong, the push throttle,
     the clear-down on exit, byte- and message-mode pipes, and the disabled
     seam. It swaps `rpc._PIPES` for a pipe it creates itself, so **Discord's
     real pipe is never opened** even while Discord is running. Its own

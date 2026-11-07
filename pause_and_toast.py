@@ -353,11 +353,98 @@ def main():
     def verify_tab_in():
         check("tabbing back in stops the run",
               app.typing is False, app.typing)
+        expected = ("Stopped - switch to your app first, then press %s "
+                    "to continue" % app.resume_key.upper())
         check("and that ending is announced too",
-              len(toasts) == 1 and "switched back to Raze" in toasts[0][1],
-              str(toasts))
+              len(toasts) == 1 and toasts[0][1] == expected, str(toasts))
         check("the status still explains the stop",
               app.status_text._text == "TAB OUT", app.status_text._text)
+        # the session is not thrown away - it is waiting for its own key
+        check("the stop leaves the session there to be resumed",
+              app._tab_stopped is True and app.session_state._text
+              == "Switch to your app first",
+              str((app._tab_stopped, app.session_state._text)))
+
+        root.after(200, press_resume)
+
+    # ---------------------------------------------------------------- #
+    #  after a tab-in stop the resume key continues, the start key begins
+    # ---------------------------------------------------------------- #
+    def press_resume():
+        # the pool is one line and the loop field still says 1 from the run
+        # above - an endless loop keeps this run alive to be looked at
+        app.loop_count = 0
+        app.nf_loop.set(0, call_change=False)
+        store = {"sent": app.stats["sent"],
+                 "elapsed": app.stats["elapsed"]}
+        app._resume_requested = True       # exactly what the hotkey thread sets
+        root.after(800, lambda: verify_continued(store))
+
+    def verify_continued(store):
+        check("the resume key picks the stopped run back up",
+              app.typing is True and app._tab_stopped is False,
+              str((app.typing, app._tab_stopped)))
+        check("and it carries the counters on instead of starting over",
+              app.stats["sent"] > store["sent"]
+              and app.stats["elapsed"] >= store["elapsed"],
+              str((store, app.stats)))
+        check("the session says so again",
+              app.status_text._text == "TYPING"
+              and app.session_state._text == "Typing",
+              str((app.status_text._text, app.session_state._text)))
+        # the announcement this key answered is not owed a second time
+        expected = ("Stopped - switch to your app first, then press %s "
+                    "to continue" % app.resume_key.upper())
+        check("and the resume owes no announcement",
+              toasts == [("Raze", expected)], str(toasts))
+
+        root.after(100, tab_in_again)
+
+    def tab_in_again():
+        # the same thing the worker does, with the run genuinely under way
+        store = {"sent": app.stats["sent"], "chars": app.stats["chars"]}
+        app._stop_requested = False
+        app._start_requested = False
+        app._tab_in_stop = True
+        app._worker_done = True
+        root.after(700, lambda: verify_tab_in_again(store))
+
+    def verify_tab_in_again(store):
+        check("tabbing in again stops it a second time",
+              app.typing is False and app._tab_stopped is True,
+              str((app.typing, app._tab_stopped)))
+        check("and the second stop keeps the counters too",
+              app.stats["sent"] >= store["sent"] and app.stats["sent"] > 0
+              and app.stats["chars"] >= store["chars"],
+              str((store, app.stats)))
+
+        root.after(200, press_start)
+
+    def press_start():
+        app._start_requested = True        # the other key, the one it names
+        root.after(100, verify_fresh_start)
+
+    def verify_fresh_start():
+        # start does not continue anything: it is a new session, so the
+        # counters are back at zero and the resumable state is gone
+        check("the start key begins again from the top",
+              app.typing is True and app.stats["sent"] == 0
+              and app._tab_stopped is False,
+              str((app.typing, app.stats, app._tab_stopped)))
+
+        root.after(300, stop_it)
+
+    def stop_it():
+        del toasts[:]
+        app._stop_requested = True         # F9, which the user chose
+        root.after(400, verify_silent_stop)
+
+    def verify_silent_stop():
+        check("a stop of a session this way stays silent",
+              app.typing is False and toasts == [],
+              str((app.typing, toasts)))
+        check("and leaves nothing behind to be resumed",
+              app._tab_stopped is False, app._tab_stopped)
 
         root.after(200, loop_counter)
 

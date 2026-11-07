@@ -14,19 +14,25 @@ them for you into whatever app you are working in.
 - **Four hotkeys** - `F8` start, `F6` pause, `F7` resume, `F9` stop by default,
   all four changeable on the Hotkeys tab. They are not aliases of each other:
   pause freezes the clock and keeps your session counters, only resume picks it
-  back up, and stop ends the session so the next start begins a new one.
+  back up, and stop ends the session so the next start begins a new one. The
+  same split applies after you tab back into Raze: resume continues the run
+  that stopped, start begins a new one.
 - **History** - how many messages went out on every day, grouped by date.
   It is permanent: it stays until the app data is deleted.
+- **Uptime** - how long Raze has been open, on the top bar. It runs from the
+  moment the app starts and keeps counting through every pause and stop; it
+  only goes back to zero when the app closes.
 - **Discord presence** - while Raze runs, your Discord profile shows whether it
   is typing, paused or idle, the total number of messages ever sent, and a
-  timer of everything Raze has typed - which picks up where it left off rather
-  than starting over. The entry carries a **Get Raze** button to the public
-  repo. It appears whenever Discord is open and takes itself down when Raze
-  closes.
+  timer of how long Raze has been open - the same uptime clock, so pausing or
+  stopping never resets it. The entry carries a **Get Raze** button to the
+  public repo. It appears whenever Discord is open and takes itself down when
+  Raze closes.
 - Everything is typed with `Enter` afterwards, automatically.
 
 A run that ends on its own raises a Windows notification - the loop ran out,
-typing failed, or you tabbed back into Raze. Pressing stop does not: you already
+typing failed, or you tabbed back into Raze (that one names the key that
+continues the run). Pressing stop does not: you already
 know why that one happened.
 
 ## Install
