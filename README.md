@@ -40,6 +40,13 @@ know why that one happened.
 Grab `Raze.exe` and run it. It is a single, self-contained file - no folders,
 no runtime, no dependencies.
 
+On its first run it asks once whether to install itself. **Install** copies
+Raze to `%LOCALAPPDATA%\Programs\Raze`, puts it in the Start Menu and on the
+Desktop, and registers it in Windows Settings > Apps with a working Uninstall
+button. **Not now** keeps it portable - the file runs from wherever it sits,
+and the question never comes back. Installing and uninstalling never touch
+`%APPDATA%\Raze`: your messages, history and settings outlive the program.
+
 ## Screen sizes
 
 Raze measures the screen it opens on and scales the whole window to fit it.
@@ -72,7 +79,7 @@ That means:
 
 ```powershell
 python build_assets.py
-pyinstaller --onefile --windowed --icon="assets\raze.ico" --add-data "assets;assets" --additional-hooks-dir "hooks" --exclude-module numpy --exclude-module typing_extensions --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 --name "Raze" AutoTyper.py
+pyinstaller --onefile --windowed --icon="assets\raze.ico" --version-file "version_info.txt" --add-data "assets;assets" --additional-hooks-dir "hooks" --exclude-module numpy --exclude-module typing_extensions --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 --name "Raze" AutoTyper.py
 ```
 
 `--additional-hooks-dir "hooks"` is not optional. `hooks/hook-PIL.Image.py`
@@ -103,7 +110,10 @@ imports `asyncio`, which drags `multiprocessing`, `hmac` and `runpy` in behind
 it, about 700 KB all told. None of these modules is ever imported at runtime;
 excluding them costs nothing and pins the payload.
 
-`python make_shortcut.py` then drops a Start Menu and Desktop shortcut.
+`python make_shortcut.py` then drops a Start Menu and Desktop shortcut - a
+dev convenience for this machine only (hardcoded paths, pywin32). The
+shipped exe does the same job itself, from inside `AutoTyper.py`; see the
+Install section of `AGENTS.md`.
 
 ```powershell
 python selftest.py      # or: Raze.exe --selftest

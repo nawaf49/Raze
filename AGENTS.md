@@ -72,14 +72,15 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 99 headless checks, run via `Raze.exe --selftest` |
+| `selftest.py` | 110 headless checks, run via `Raze.exe --selftest` |
 | `pause_and_toast.py` | 56 checks: pause/resume/toast routing, a tab-in stop continued by the resume key and begun again by the start key, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
 | `layout_check.py` | 25 checks: the window fits the work area, the uptime on the status line, the four keycaps, the hotkeys card and button hover backgrounds, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `rpc.py` | Discord presence: named pipe over ctypes, its own thread |
 | `rpc_check.py` | 49 checks: the presence protocol against a fake local pipe |
 | `build_assets.py` | Regenerates `assets/` artwork from source |
-| `make_shortcut.py` | Start Menu + Desktop shortcut "Raze" |
+| `make_shortcut.py` | Dev-only Start Menu + Desktop shortcut (hardcoded paths, pywin32). The shipped exe installs itself — see *Install* |
+| `version_info.txt` | PyInstaller version resource (`--version-file`), so Properties > Details reads "Raze, version 1.15". Bump with `APP_VERSION` |
 | `AGENTS.md` | This file — read it first |
 | `README.md` | The **source-side** readme, not the public one. See *Two repos* |
 | `app_icon.png` | The dark tile; the public README title references it by this exact name |
@@ -504,7 +505,11 @@ payload that is unpacked from scratch on every launch.
 
 `%APPDATA%\Raze\config.json`. Keys: `msg_interval`, `loop`, `random`,
 `start_key`, `stop_key`, `pause_key`, `resume_key`, `messages`, `history`,
-`daily`.
+`daily`, `install_asked`.
+
+- `install_asked` is the one-time install question's answer flag (see
+  *Install*). It is written the moment the user picks Install **or** Not
+  now, so the question is asked exactly once per user, ever.
 
 - `total_secs` used to be here: lifetime typing seconds, which the presence
   timer counted from. The timer is the app's own uptime now (see *Discord
@@ -531,6 +536,60 @@ payload that is unpacked from scratch on every launch.
   The field's label row is likewise not pinned; it takes its height from
   the label, so the spinner below never sits on top of grown glyphs.
 
+## Install
+
+A downloaded file is not a program. Windows only lists something in
+Settings > Apps when a per-user uninstall key names it, and only shows it
+in the Start Menu when a .lnk points at it — so the exe installs *itself*,
+once, on first run. Per-user throughout: no admin, no UAC, no second file.
+
+- **The question.** `__main__` polls `_intro_done` (200 ms beats), then
+  waits one settled 700 ms, then calls `_maybe_offer_install`. It shows one
+  modal — title "Install Raze", message "Adds Raze to your Start Menu and
+  to Settings.", pills **Install** / **Not now** — and whichever pill is
+  picked sets `install_asked` in the config, so the question is asked
+  exactly once per user, ever. The gate is
+  `install_prompt_needed(exe, asked, registered)`: never for a dev run
+  (`running_exe()` returns None unless `sys.frozen`), never after an
+  answer, never when the registry already lists Raze, and never when the
+  running file already *is* the installed copy.
+- **What an install writes**, all computed read-only by `install_plan()`:
+  a copy at `%LOCALAPPDATA%\Programs\Raze\Raze.exe`; `Raze.lnk` in the
+  Start Menu and on the Desktop; and the HKCU
+  `Software\Microsoft\Windows\CurrentVersion\Uninstall\Raze` key that
+  Settings > Apps reads — DisplayName, DisplayIcon, DisplayVersion
+  (`APP_VERSION`), UninstallString `"<target>" --uninstall`, EstimatedSize.
+  The shell folders come from `SHGetFolderPathW`, not from environment
+  variables, so a OneDrive-redirected Desktop lands where Explorer puts it.
+- **How it is built.** `_create_shortcut` calls the IShellLinkW vtable by
+  hand through ctypes (QI/AddRef/Release at slots 0–2, SetDescription 7,
+  SetWorkingDirectory 9, SetIconLocation 17, SetPath 19, then
+  IPersistFile::Save at 6 after a QueryInterface) because pywin32 would be
+  a new dependency — hard rule 6. `make_shortcut.py` still uses pywin32;
+  it is a dev script with hardcoded paths and never ships. The registry
+  goes through stdlib `winreg`.
+- **The thread rule holds.** `do_install` runs on a worker thread (files
+  and registry are not Tk work) and never touches Tk: it only sets
+  `_install_done = (ok, err)`, and `_tick_inner` consumes it first thing —
+  before the start request, because the report is a modal and nothing may
+  start under a dialog that just took focus.
+- **`--install` / `--uninstall` run before `acquire_single_instance`** in
+  `__main__` — they must never contend for the mutex with a live app — and
+  report through native `MessageBoxW` (`_native_info` / `_native_error`)
+  because no Tk exists yet. `--uninstall` refuses with a visible box while
+  `instance_running()` says a copy holds the mutex (OpenMutexW *probes*, it
+  never creates the mutex). Uninstall removes the registry key, both links
+  and the installed copy — when the running file is the target, a detached
+  `cmd` waits for this process to leave, then deletes — and **never
+  `%APPDATA%\Raze`** (hard rule 1: deleting the program never deletes the
+  user's data).
+- **A harness must never call `do_install`/`do_uninstall`** — they write
+  to the tester's machine. `selftest`'s install section asserts on
+  `install_plan()` and `install_prompt_needed()` only (11 checks).
+- The failure dialog keeps its message to one line ≤ ~52 characters:
+  `textengine` has no newline handling, and a longer line would be
+  ellipsized by the artwork — never cut a word mid-way in a dialog either.
+
 ## Testing protocol
 
 **Strictly non-intrusive.** The user is often playing a game while a change is
@@ -540,6 +599,12 @@ being verified.
   window on the desktop.
 - Never fire a live toast during testing. Validate the struct and the API
   return codes instead, and **ask before** showing one.
+- **Never call `do_install` / `do_uninstall` from a harness** — they write
+  to the tester's machine (registry key, shortcuts, a copied exe). Assert
+  on the read-only surface instead: `install_plan()` computes every path an
+  install would touch without touching it, and `install_prompt_needed()`
+  is pure. Same for `_create_shortcut` — never point it at a real folder
+  from a test.
 - Harnesses that build a real `AutoTyper` must set
   `A.reduce_motion_enabled = lambda: True` and re-apply `root.attributes("-alpha", 0.0)`
   **after** construction, and must set `A.rpcmod.enabled = False` — otherwise
@@ -606,6 +671,7 @@ being verified.
 
 ```powershell
 pyinstaller --onefile --windowed --icon="assets\raze.ico" `
+  --version-file "version_info.txt" `
   --add-data "assets;assets" --additional-hooks-dir "hooks" `
   --exclude-module numpy --exclude-module typing_extensions `
   --exclude-module PyQt5 --exclude-module PyQt6 `
@@ -616,6 +682,13 @@ pyinstaller --onefile --windowed --icon="assets\raze.ico" `
 Every flag is load-bearing. The hook and the excludes exist for one reason —
 the payload must not depend on what happens to be installed on the build
 machine:
+
+- `--version-file "version_info.txt"` stamps the VSVersionInfo resource, so
+  the file's Properties > Details reads "Raze, version 1.15" instead of
+  blank and Explorer shows the icon's file type properly. Its numbers must
+  match `APP_VERSION` in `AutoTyper.py` — bump both together, every release
+  (see *Releasing*). The file itself is compiled into the resource; it does
+  not travel inside the onefile payload.
 
 - `--additional-hooks-dir "hooks"` replaces Pillow's own hook, which collects
   **every** codec Pillow ships including a 7.7 MB AVIF library. Raze opens one
@@ -654,6 +727,19 @@ open — the single-instance check reports honestly in both states.
 
 ## Releasing
 
+- **Before building the next release: bump the version in both places.**
+  `APP_VERSION` in `AutoTyper.py` and `version_info.txt`
+  (`filevers`/`prodvers` + the `FileVersion`/`ProductVersion` strings) must
+  say the same number — the registry's DisplayVersion, the file's
+  Properties > Details and the Settings > Apps entry all read them, and a
+  mismatch ships visible in three places at once.
+- **The self-installer changes the pitch — ask before writing it.** The
+  first release *after* the install feature (this code) is the first one
+  where "Single file. No install, no folder to keep." is no longer true:
+  the exe now offers to install itself. The notes' opening line and the
+  public README's install wording both need new text for it — draft it,
+  show the user, do not ship the old pitch with a build that offers an
+  install. (The hotkeys table and the tab-out line below stay as they are.)
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
 - **Exactly one release exists at a time.** When the next one ships, delete the

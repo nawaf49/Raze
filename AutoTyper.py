@@ -263,6 +263,10 @@ TOAST_RETRY_S = 2.0
 # how many recent messages are kept in the file
 HISTORY_KEEP = 200
 
+# the shipped version - Settings > Apps and the file's Properties both read
+# it.  Bump it together with version_info.txt whenever a release ships.
+APP_VERSION = "1.15"
+
 # nav tabs: (label, key)
 TABS = (("Typer", "typer"), ("Hotkeys", "hotkeys"),
         ("History", "history"))
@@ -475,6 +479,387 @@ def focus_existing_instance():
             user32.SetForegroundWindow(hwnd)
     except Exception:
         pass
+
+
+# ------------------------------------------------------------------ #
+#  Install
+# ------------------------------------------------------------------ #
+# A downloaded file in Downloads is not a program: Windows only lists
+# something in Settings > Apps when a per-user uninstall key names it, and
+# only shows it in the Start Menu when a .lnk points at it.  So the exe
+# installs *itself* - a copy under %LOCALAPPDATA%\Programs, two shortcuts,
+# one HKCU registry key - entirely through the standard library and ctypes,
+# because hard rule 6 keeps the payload to one self-contained file.  Nothing
+# here needs admin rights: per-user install, per-user uninstall.
+#
+# Everything below is callable before Tk exists (`--install` / `--uninstall`
+# run ahead of the single-instance check), and `install_plan()` is the
+# read-only surface the selftest asserts on - a harness must never call
+# do_install or do_uninstall, they write to the tester's machine.
+
+UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Raze"
+INSTALL_LINK_NAME = "Raze.lnk"
+INSTALL_DESC = "Raze - type anything automatically"
+# csidl values Explorer itself resolves: a Desktop redirected by OneDrive
+# does not sit at %USERPROFILE%\Desktop, and guessing from environment
+# variables gets that wrong
+CSIDL_STARTMENU = 0x000B
+CSIDL_DESKTOPDIRECTORY = 0x0010
+
+
+def running_exe():
+    """Where this process was launched from, or None under plain Python.
+
+    A dev run is `python AutoTyper.py`, whose sys.executable is the
+    interpreter - it must never be offered an install, so it gets None.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.abspath(sys.executable)
+    return None
+
+
+def install_dir():
+    """The per-user install home - no admin rights, no UAC prompt."""
+    base = os.environ.get("LOCALAPPDATA") or os.path.join(
+        os.path.expanduser("~"), "AppData", "Local")
+    return os.path.join(base, "Programs", "Raze")
+
+
+def install_exe_path():
+    return os.path.join(install_dir(), "Raze.exe")
+
+
+def _same_file(a, b):
+    return bool(a and b and os.path.normcase(os.path.abspath(a)) ==
+                os.path.normcase(os.path.abspath(b)))
+
+
+def registry_installed():
+    """True when Windows already lists Raze under Settings > Apps."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY) as key:
+            winreg.QueryValueEx(key, "DisplayName")
+        return True
+    except Exception:
+        return False
+
+
+def instance_running():
+    """True when another Raze already holds the single-instance mutex.
+
+    OpenMutexW only probes - it never creates the mutex the way
+    CreateMutexW would - so this can run before acquire_single_instance and
+    without leaving anything behind when the answer is "no".
+    """
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.OpenMutexW.restype = ctypes.c_void_p
+        k32.OpenMutexW.argtypes = [ctypes.c_ulong, ctypes.c_bool,
+                                   ctypes.c_wchar_p]
+        name = "Local\\Raze.AutoTyper.SingleInstance." + \
+            os.environ.get("USERNAME", "user")
+        handle = k32.OpenMutexW(0x00100000, False, name)   # SYNCHRONIZE
+        if handle:
+            k32.CloseHandle(handle)
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def _shell_folder(csidl, fallback):
+    """A shell folder the way Explorer resolves it, with a plain fallback."""
+    try:
+        from ctypes import wintypes
+        fn = ctypes.windll.shell32.SHGetFolderPathW
+        fn.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p,
+                       ctypes.c_ulong, wintypes.LPWSTR]
+        fn.restype = ctypes.c_long
+        buf = ctypes.create_unicode_buffer(260)
+        if fn(None, csidl, None, 0, buf) == 0 and buf.value:
+            return buf.value
+    except Exception:
+        pass
+    return fallback
+
+
+def install_plan():
+    """Everything an install would touch, computed without touching it.
+
+    Read-only by construction: the selftest asserts on this dictionary
+    instead of writing shortcuts or registry keys on the tester's machine.
+    """
+    source = running_exe()
+    target = install_exe_path()
+    appdata = os.environ.get("APPDATA") or os.path.join(
+        os.path.expanduser("~"), "AppData", "Roaming")
+    profile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+    start_menu = _shell_folder(
+        CSIDL_STARTMENU,
+        os.path.join(appdata, "Microsoft", "Windows",
+                     "Start Menu", "Programs"))
+    desktop = _shell_folder(CSIDL_DESKTOPDIRECTORY,
+                            os.path.join(profile, "Desktop"))
+    return {
+        "source": source,
+        "target": target,
+        "dir": install_dir(),
+        "links": [os.path.join(start_menu, INSTALL_LINK_NAME),
+                  os.path.join(desktop, INSTALL_LINK_NAME)],
+        "uninstall_key": UNINSTALL_KEY,
+        "uninstall_string": '"%s" --uninstall' % target,
+        "display_icon": target,
+        "install_location": install_dir(),
+        "copies": bool(source and not _same_file(source, target)),
+    }
+
+
+def install_prompt_needed(exe, asked, registered):
+    """Whether the one-time install question may be asked.
+
+    Never for a dev run (exe is None), never once an answer was given,
+    never for something Windows already lists, and never for a copy that is
+    already running from its own install home.
+    """
+    if not exe or asked or registered:
+        return False
+    return not _same_file(exe, install_exe_path())
+
+
+def _native_error(title, message):
+    """A box for the install paths, which run before any Tk exists."""
+    try:
+        ctypes.windll.user32.MessageBoxW(None, message, title, 0x10)  # MB_ICONERROR
+    except Exception:
+        pass
+
+
+def _native_info(title, message):
+    """The good-news twin of _native_error - same pre-Tk audience."""
+    try:
+        ctypes.windll.user32.MessageBoxW(None, message, title, 0x40)  # MB_ICONINFORMATION
+    except Exception:
+        pass
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
+                ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
+
+
+def _guid(text):
+    import uuid
+    raw = uuid.UUID(text).bytes_le
+    g = _GUID()
+    ctypes.memmove(ctypes.byref(g), raw, 16)
+    return g
+
+
+def _create_shortcut(link_path, target, workdir, icon, desc):
+    """Write a .lnk through IShellLinkW - raw COM through ctypes, nothing else.
+
+    pywin32 would be ten lines and a new dependency, and make_shortcut.py
+    carries it only because it is a dev script.  The shipped exe has to stay
+    one self-contained file (hard rule 6), so the vtable is called by hand:
+    IShellLinkW starts QI/AddRef/Release at 0, SetDescription is 7,
+    SetWorkingDirectory 9, SetIconLocation 17, SetPath 19; IPersistFile's
+    Save is 6 after a QueryInterface for its IID.
+    """
+    from ctypes import wintypes
+
+    ole32 = ctypes.windll.ole32
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    ole32.CoInitializeEx.restype = ctypes.c_long
+    ole32.CoCreateInstance.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                       ctypes.c_ulong, ctypes.c_void_p,
+                                       ctypes.c_void_p]
+    ole32.CoCreateInstance.restype = ctypes.c_long
+    ole32.CoUninitialize.argtypes = []
+
+    g_cls = _guid("{00021401-0000-0000-C000-000000000046}")   # ShellLink
+    g_link = _guid("{000214F9-0000-0000-C000-000000000046}")  # IShellLinkW
+    g_persist = _guid("{0000010b-0000-0000-C000-000000000046}")  # IPersistFile
+
+    # S_OK / S_FALSE both mean this call initialised the apartment and owns
+    # the matching CoUninitialize; RPC_E_CHANGED_MODE means somebody else
+    # already did, in another flavour, and uninitialising would be wrong
+    hr = ole32.CoInitializeEx(None, 2)          # COINIT_APARTMENTTHREADED
+    owns_apartment = hr in (0, 1)
+    link = ctypes.c_void_p()
+    try:
+        hr = ole32.CoCreateInstance(ctypes.byref(g_cls), None, 0x1,  # in-proc
+                                    ctypes.byref(g_link), ctypes.byref(link))
+        if hr != 0 or not link.value:
+            raise OSError("CoCreateInstance failed (0x%08x)" % hr)
+
+        slots = ctypes.cast(link, ctypes.POINTER(ctypes.c_void_p))
+
+        def fn(index, restype, *argtypes):
+            proto = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)
+            return proto(slots[index])
+
+        HRESULT = ctypes.c_long
+        if fn(7, HRESULT, ctypes.c_wchar_p)(link, desc) != 0:      # SetDescription
+            raise OSError("SetDescription failed")
+        if fn(9, HRESULT, ctypes.c_wchar_p)(link, workdir) != 0:   # SetWorkingDirectory
+            raise OSError("SetWorkingDirectory failed")
+        if fn(17, HRESULT, ctypes.c_wchar_p, ctypes.c_int)(        # SetIconLocation
+                link, icon, 0) != 0:
+            raise OSError("SetIconLocation failed")
+        if fn(19, HRESULT, ctypes.c_wchar_p)(link, target) != 0:   # SetPath
+            raise OSError("SetPath failed")
+
+        persist = ctypes.c_void_p()
+        hr = fn(0, HRESULT, ctypes.c_void_p, ctypes.c_void_p)(     # QueryInterface
+            link, ctypes.byref(g_persist), ctypes.byref(persist))
+        if hr != 0 or not persist.value:
+            raise OSError("QueryInterface IPersistFile failed (0x%08x)" % hr)
+        try:
+            pslots = ctypes.cast(persist, ctypes.POINTER(ctypes.c_void_p))
+            save = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p,
+                                      ctypes.c_wchar_p,
+                                      wintypes.BOOL)(pslots[6])
+            if save(persist, link_path, True) != 0:
+                raise OSError("IPersistFile::Save failed")
+        finally:
+            fn(2, HRESULT)(persist)                                # Release
+    finally:
+        if link.value:
+            try:
+                slots = ctypes.cast(link, ctypes.POINTER(ctypes.c_void_p))
+                release = ctypes.WINFUNCTYPE(ctypes.c_long,
+                                             ctypes.c_void_p)(slots[2])
+                release(link)
+            except Exception:
+                pass
+        if owns_apartment:
+            try:
+                ole32.CoUninitialize()
+            except Exception:
+                pass
+
+
+def _write_uninstall_entry(plan):
+    """The HKCU key Settings > Apps reads to list and remove Raze."""
+    import winreg
+
+    kb = max(1, os.path.getsize(plan["target"]) // 1024)
+    key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, plan["uninstall_key"],
+                             0, winreg.KEY_SET_VALUE)
+    try:
+        values = [
+            ("DisplayName", "Raze", winreg.REG_SZ),
+            ("DisplayIcon", plan["display_icon"], winreg.REG_SZ),
+            ("Publisher", "Raze", winreg.REG_SZ),
+            ("DisplayVersion", APP_VERSION, winreg.REG_SZ),
+            ("InstallLocation", plan["install_location"], winreg.REG_SZ),
+            ("UninstallString", plan["uninstall_string"], winreg.REG_SZ),
+            ("NoModify", 1, winreg.REG_DWORD),
+            ("NoRepair", 1, winreg.REG_DWORD),
+            ("EstimatedSize", kb, winreg.REG_DWORD),
+            ("URLInfoAbout", "https://github.com/nawaf49/Raze", winreg.REG_SZ),
+        ]
+        for name, value, kind in values:
+            winreg.SetValueEx(key, name, 0, kind, value)
+    finally:
+        winreg.CloseKey(key)
+
+
+def _remove_uninstall_entry():
+    try:
+        import winreg
+        winreg.DeleteKeyEx(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY,
+                           winreg.KEY_SET_VALUE)
+    except Exception:
+        pass
+
+
+def _forget_links(links):
+    for link in links:
+        try:
+            os.remove(link)
+        except OSError:
+            pass
+
+
+def do_install():
+    """Copy Raze to its home, make the shortcuts, register it.
+
+    Idempotent - a second run refreshes every artifact - and it rolls the
+    shortcuts back if registration fails, so a half install never shows an
+    entry whose uninstall does nothing.  Returns (ok, error).
+    """
+    import shutil
+
+    plan = install_plan()
+    try:
+        os.makedirs(plan["dir"], exist_ok=True)
+    except OSError as e:
+        return False, str(e)
+    if plan["copies"]:
+        try:
+            shutil.copy2(plan["source"], plan["target"])
+        except OSError:
+            # the usual reason is the installed copy running and locking its
+            # own image; if Windows already lists that copy, only the
+            # refresh of shortcuts and entry is still owed
+            if not (registry_installed() and os.path.exists(plan["target"])):
+                return False, "could not copy Raze into " + plan["dir"]
+    made = []
+    for link in plan["links"]:
+        try:
+            _create_shortcut(link, plan["target"], plan["dir"],
+                             plan["target"] + ",0", INSTALL_DESC)
+            made.append(link)
+        except Exception as e:
+            _forget_links(made)
+            return False, "could not create the shortcuts: %s" % e
+    try:
+        _write_uninstall_entry(plan)
+    except Exception as e:
+        _remove_uninstall_entry()
+        _forget_links(made)
+        return False, "could not register Raze: %s" % e
+    return True, ""
+
+
+def do_uninstall():
+    """Take the entry, the shortcuts and the installed copy away.
+
+    Hard rule 1 holds: %APPDATA%\\Raze is never touched, so messages,
+    history and settings outlive the program itself.  Returns (ok, error).
+    """
+    import subprocess
+
+    plan = install_plan()
+    _remove_uninstall_entry()
+    _forget_links(plan["links"])
+    target, directory = plan["target"], plan["dir"]
+    if _same_file(running_exe(), target):
+        # this file *is* the one being removed, and Windows locks a running
+        # image: a detached cmd waits for this process to leave, then clears
+        # up after it.  The uninstaller came from Settings > Apps, so the
+        # entry and the shortcuts are already gone by the time it exits
+        cmd = ('ping -n 3 127.0.0.1 >nul & del /f /q "%s" & rmdir "%s"'
+               % (target, directory))
+        try:
+            subprocess.Popen(["cmd", "/c", cmd],
+                             creationflags=0x00000008 | 0x00000200,  # detached
+                             close_fds=True)
+        except Exception as e:
+            return False, str(e)
+    else:
+        try:
+            if os.path.exists(target):
+                os.remove(target)
+        except OSError as e:
+            return False, str(e)
+        try:
+            os.rmdir(directory)        # only ever empty - never user files
+        except OSError:
+            pass
+    return True, ""
 
 
 def reduce_motion_enabled() -> bool:
@@ -1516,6 +1901,13 @@ class AutoTyper:
         self._random_pick = False
         self._auto_enter = True
 
+        # whether the one-time install question has been answered; the real
+        # value arrives with the config in _apply_config, but the flag has
+        # to exist before it so nothing reads an attribute that is not there
+        self.install_asked = False
+        # (ok, error) from a running install, set by the worker thread and
+        # consumed by the heartbeat - the thread boundary rule again
+        self._install_done = None
         self.cfg = self._load_config()
         self._tab = "typer"
         self._views = {}
@@ -2753,6 +3145,7 @@ class AutoTyper:
         msgs = c.get("messages") or ["Hello there!", "How can I help you?", "Have a great day!"]
         self.editor.insert("1.0", "\n".join(msgs))
         self._update_pool_meta()
+        self.install_asked = bool(c.get("install_asked"))
 
     def _commit_fields(self):
         """Read what is on screen, not what was there before the user typed.
@@ -2783,6 +3176,7 @@ class AutoTyper:
             "random": self._random_pick,
             "history": [{"t": t, "m": m} for t, m in self.history[-HISTORY_KEEP:]],
             "daily": self.daily,
+            "install_asked": self.install_asked,
         })
         try:
             write_config(self.cfg)
@@ -2930,7 +3324,12 @@ class AutoTyper:
 
     def _confirm(self, title, message, confirm_text="Confirm", cancel_text="Cancel",
                  kind="solid", wait=True):
-        """A confirmation dialog in the app's own style. Returns True on yes."""
+        """A confirmation dialog in the app's own style. Returns True on yes.
+
+        cancel_text=None drops the cancel pill entirely (Escape still says
+        no) - used by the one question that is an offer, not a choice with
+        two equal sides.
+        """
         state = {"ok": False}
         try:
             dialog = ctk.CTkToplevel(self.root)
@@ -2978,10 +3377,12 @@ class AutoTyper:
                     pass
                 dialog.destroy()
 
-            Pill(row, cancel_text, lambda: close(False), kind="glass", height=36,
-                 font=(FONT_SB, -12)).pack(side="right")
+            if cancel_text is not None:
+                Pill(row, cancel_text, lambda: close(False), kind="glass",
+                     height=36, font=(FONT_SB, -12)).pack(side="right")
             Pill(row, confirm_text, lambda: close(True), kind=kind, height=36,
-                 font=(FONT_SB, -12)).pack(side="right", padx=(0, 8))
+                 font=(FONT_SB, -12)).pack(
+                     side="right", padx=(0, 8 if cancel_text is not None else 0))
 
             # centre it over the app; x/y are already device px and pass
             # through CTk's geometry untouched, WxH must stay design px
@@ -3008,6 +3409,42 @@ class AutoTyper:
         except Exception:
             return False
         return state["ok"]
+
+    def _maybe_offer_install(self):
+        """Ask once whether Raze should become a real installed program.
+
+        Only ever reached from __main__, and only ever for a frozen exe
+        that Windows does not list yet - install_prompt_needed has the
+        full list of reasons not to ask.  Either answer ends the question
+        for good.
+        """
+        try:
+            if not install_prompt_needed(running_exe(), self.install_asked,
+                                         registry_installed()):
+                return
+            yes = self._confirm("Install Raze",
+                                "Adds Raze to your Start Menu and to Settings.",
+                                confirm_text="Install", cancel_text="Not now")
+            self.install_asked = True
+            self._save_config()
+            if yes:
+                self._install_now()
+        except Exception:
+            pass
+
+    def _install_now(self):
+        """Copy Raze into place on a worker thread; the heartbeat reports.
+
+        do_install writes files and the registry, so it never runs on the
+        Tk thread - and like the hotkey listener, the worker never touches
+        Tk either: it only sets _install_done, which _tick_inner picks up.
+        """
+        def work():
+            try:
+                self._install_done = do_install()
+            except Exception as e:
+                self._install_done = (False, str(e))
+        threading.Thread(target=work, name="install", daemon=True).start()
 
     def _clear_messages(self):
         if self._confirm("Clear pool",
@@ -3546,6 +3983,25 @@ class AutoTyper:
         self._fire_toast(hwnd, title, body)
 
     def _tick_inner(self):
+        # the install worker's answer arrives here, never through Tk from
+        # its own thread - and it is first because the report is a modal:
+        # nothing may start under a dialog that just took focus
+        install_done = getattr(self, "_install_done", None)
+        if install_done is not None:
+            self._install_done = None
+            ok, err = install_done
+            if ok:
+                self._confirm("Installed",
+                              "Raze is in your Start Menu and in Settings.",
+                              confirm_text="Done", cancel_text=None)
+            else:
+                # one line, no wrap in the artwork - keep it to the room
+                detail = (err or "").strip()
+                if not detail or len(detail) > 52:
+                    detail = "Could not install Raze."
+                self._confirm("Install failed", detail,
+                              confirm_text="OK", cancel_text=None)
+
         if self._start_requested:
             self._start_requested = False
             if not self.typing:
@@ -3763,6 +4219,29 @@ if __name__ == "__main__":
         root.destroy()
         sys.exit(0)
 
+    if "--install" in sys.argv:
+        # before acquire_single_instance on purpose: an install runs once,
+        # must not be told "another copy is running", and must never
+        # contend for the mutex with a live app
+        ok, err = do_install()
+        if ok:
+            _native_info("Raze", "Raze is installed.")
+        else:
+            _native_error("Raze", err or "Could not install Raze.")
+        sys.exit(0 if ok else 1)
+
+    if "--uninstall" in sys.argv:
+        # Settings > Apps runs this.  The copy on disk cannot delete itself
+        # while it runs, and the entry must not disappear from under a live
+        # window - so refuse, visibly, and let the user close Raze first
+        if instance_running():
+            _native_error("Raze", "Close Raze first, then uninstall it.")
+            sys.exit(1)
+        ok, err = do_uninstall()
+        if not ok:
+            _native_error("Raze", err or "Could not uninstall Raze.")
+        sys.exit(0 if ok else 1)
+
     if not acquire_single_instance():
         # another copy is already running - bring it forward instead
         focus_existing_instance()
@@ -3776,4 +4255,16 @@ if __name__ == "__main__":
 
     root = ctk.CTk()
     app = AutoTyper(root)
+
+    # the one-time install question, asked after the opening sequence has
+    # finished - polling _intro_done first, then one settled beat, so the
+    # modal never lands on a window still assembling itself.  It answers
+    # itself "no" for dev runs, answered configs and installed copies.
+    def _offer_install():
+        if not getattr(app, "_intro_done", False):
+            root.after(200, _offer_install)
+            return
+        root.after(700, app._maybe_offer_install)
+    root.after(600, _offer_install)
+
     root.mainloop()

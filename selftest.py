@@ -898,6 +898,70 @@ def run():
                                    str(os.listdir(os.path.join(
                                        legacy_root, "Raze"))))
 
+    print("install")
+    # Read-only throughout: install_plan computes what an install would
+    # touch without touching it, and no harness may ever call do_install
+    # or do_uninstall - they write to this machine's registry and folders.
+    plan = A.install_plan()
+    local = os.environ.get("LOCALAPPDATA", "")
+    failures += not _check("install home sits under LOCALAPPDATA",
+                           plan["dir"] == A.install_dir()
+                           and plan["dir"].startswith(local) and local,
+                           plan["dir"])
+    failures += not _check("the target is Raze.exe inside that home",
+                           plan["target"] == os.path.join(plan["dir"],
+                                                          "Raze.exe")
+                           and plan["target"] == A.install_exe_path(),
+                           plan["target"])
+    failures += not _check("two shortcuts: Start Menu and Desktop",
+                           len(plan["links"]) == 2
+                           and all(link.endswith(A.INSTALL_LINK_NAME)
+                                   for link in plan["links"])
+                           and any("Start Menu" in link
+                                   for link in plan["links"])
+                           and any("Desktop" in link
+                                   for link in plan["links"]),
+                           str(plan["links"]))
+    failures += not _check("the uninstall entry names --uninstall",
+                           plan["uninstall_string"]
+                           == '"%s" --uninstall' % plan["target"]
+                           and plan["uninstall_key"] == A.UNINSTALL_KEY
+                           and plan["uninstall_key"].endswith("\\Raze"),
+                           plan["uninstall_string"])
+    # hard rule 1: the config profile must be outside every path an
+    # install or uninstall ever writes to
+    data_home = os.path.join(os.path.expanduser("~"), "AppData", "Roaming",
+                             "Raze")
+    failures += not _check("nothing in the plan touches the config profile",
+                           not any(os.path.normcase(p).startswith(
+                               os.path.normcase(data_home) + os.sep)
+                               for p in [plan["dir"], plan["target"]]
+                               + plan["links"]),
+                           data_home)
+    if getattr(sys, "frozen", False):
+        failures += not _check("a frozen run reports its own exe",
+                               A.running_exe()
+                               == os.path.abspath(sys.executable),
+                               str(A.running_exe()))
+    else:
+        failures += not _check("a dev run has no install source",
+                               A.running_exe() is None,
+                               str(A.running_exe()))
+    # the five gates of the one-time question, each on its own - only a
+    # fresh, unlisted, unanswered download copy is ever offered install
+    fresh = r"C:\Users\someone\Downloads\Raze.exe"
+    failures += not _check("a dev run is never offered an install",
+                           not A.install_prompt_needed(None, False, False))
+    failures += not _check("an answered question is not asked again",
+                           not A.install_prompt_needed(fresh, True, False))
+    failures += not _check("a listed install is not offered again",
+                           not A.install_prompt_needed(fresh, False, True))
+    failures += not _check("the installed copy does not offer itself",
+                           not A.install_prompt_needed(plan["target"],
+                                                       False, False))
+    failures += not _check("a fresh download is offered the install",
+                           A.install_prompt_needed(fresh, False, False))
+
     print()
     if failures:
         print(f"SELFTEST FAILED - {failures} check(s) did not pass")
