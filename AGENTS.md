@@ -452,11 +452,18 @@ end of the session.
   expected, so the next vtable read dies on GUID bytes; and every interface
   pointer must be released exactly once on every path, including the early
   returns taken after the toast object already exists.
-- **The banner is attributed to `TOAST_APP_ID = "Raze"`**, not to a window:
-  no tray icon, no 7 s cleanup, no `_raze_hwnd` — `_toast` needs no handle
-  at all. `selftest` builds the objects headless (`_toast_objects`) and
-  releases them; that path creates no `Notifications\Settings` registry key
-  and shows nothing, so it is safe inside the suite.
+- **The banner is attributed to `toast_app_id()`**, not to a window: no
+  tray icon, no 7 s cleanup, no `_raze_hwnd` — `_toast` needs no handle at
+  all. The id is the **installed exe's path**, because Windows resolves a
+  classic Win32 toast through the Start Menu shortcut's target: a bare
+  `"Raze"` answered S_OK, wrote a history entry and showed nothing
+  (proven live), while the exe path bannered instantly. It prefers the
+  registered install target so a portable run of the same file banners
+  too; a dev run with no install falls back to a plain name it cannot
+  render with anyway (harnesses stub `notify_toast`). `selftest` builds
+  the objects headless (`_toast_objects`) and releases them; that path
+  creates no `Notifications\Settings` registry key and shows nothing, so
+  it is safe inside the suite.
 - The payload is plain XML (`toast_xml`): a `ToastGeneric` binding with one
   title and one body line, every message escaped — a stray `&` would make
   Windows reject the toast outright. `selftest` parses it back with

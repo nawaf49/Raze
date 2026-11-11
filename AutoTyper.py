@@ -1309,7 +1309,23 @@ def is_foreground(hwnd):
 # windows.data.xml.dom.h): IInspectable owns slots 0-5 everywhere, so each
 # interface's own methods start at 6.
 
-TOAST_APP_ID = "Raze"
+def toast_app_id():
+    """The app id Windows can resolve to a Start Menu shortcut.
+
+    A bare name files the notification where nothing ever shows it: S_OK,
+    a history entry, no banner - proven live on this machine.  Windows
+    resolves a classic Win32 toast through the shortcut's target path, so
+    the id is the installed copy whenever the registry lists it (a portable
+    run of the same file needs that same id, because its own path has no
+    shortcut), the running file when nothing is registered yet, and a plain
+    name for a dev run that has neither - harnesses stub notify_toast.
+    """
+    try:
+        if registry_installed():
+            return install_exe_path()
+        return running_exe() or "Raze"
+    except Exception:
+        return "Raze"
 
 # IToastNotificationManagerStatics - slot 6 is CreateToastNotifier (no arg),
 # slot 7 is CreateToastNotifierWithId, the one that takes an app id
@@ -1527,7 +1543,7 @@ def _toast_objects(title, body):
         if not manager:
             _release(toast)
             return 0, 0
-        haumid = _hstr(TOAST_APP_ID)
+        haumid = _hstr(toast_app_id())
         if not haumid:
             _release(toast)
             return 0, 0
