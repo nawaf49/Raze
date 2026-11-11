@@ -862,13 +862,13 @@ open — the single-instance check reports honestly in both states.
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
 - **Exactly one release exists at a time.** When the next one ships, delete the
-  old: `gh release delete v1.17 --repo nawaf49/Raze --yes`. The user's rule — a
+  old: `gh release delete v1.18 --repo nawaf49/Raze --yes`. The user's rule — a
   visitor sees one clear download, never a menu of old versions. The private
-  repo's git log is the only remaining record of what v1.0–v1.16 contained.
-  **Current: v1.17.**
+  repo's git log is the only remaining record of what v1.0–v1.17 contained.
+  **Current: v1.18.**
 - **Exactly one *tag* too.** Deleting the release leaves its tag behind, and
   the Tags page would still advertise old versions:
-  `gh api -X DELETE repos/nawaf49/Raze/git/refs/tags/v1.17`. Check with
+  `gh api -X DELETE repos/nawaf49/Raze/git/refs/tags/v1.18`. Check with
   `gh api repos/nawaf49/Raze/tags --jq ".[].name"` — only the current one may
   answer. Never touch the current tag: it is what the release hangs on.
   (Public repo tags are pruned this way, so the Tags page shows one entry.)
@@ -881,7 +881,8 @@ open — the single-instance check reports honestly in both states.
   them ("what's the point of the sha56 idk what that is") and the feature list
   was dropped too — "it's already written in the readme". The match is still
   checked both ways on every ship; only the publication of it is gone.
-  (v1.17: `4D658097CC6256678F92D963326C57C0F7C0605C3FBB25B5C8EA46720B056AF9`
+  (v1.18: `A1F0D292478CE6DC674E62DE70EF47BF407217DA5220580E016D791303892CAF`
+  over 15,085,065 bytes; v1.17: `4D658097CC6256678F92D963326C57C0F7C0605C3FBB25B5C8EA46720B056AF9`
   over 15,078,839 bytes; v1.16: `8D3301F9515E6D67117684A804756F9387AD28D69FC9CD05BE9C69657E7FB4C4`
   over 15,061,800 bytes; v1.15: `EC33A7261BC31391333732F7C3D8FC6D3B73EAB782C3132AE12158B021E628E3`
   over 15,038,931 bytes; v1.14: `3EBFDB2D71F7B5AFC891A1C5E370D50AC2AAD8B9533D8F3D523F7C0AD1E78BBE`
@@ -913,7 +914,7 @@ and stops if you tab back in.
 ```
 
   Read the published one back with
-  `gh release view v1.17 --repo nawaf49/Raze --json body --jq .body`.
+  `gh release view v1.18 --repo nawaf49/Raze --json body --jq .body`.
 
 ## The public README
 
