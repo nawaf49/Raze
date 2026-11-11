@@ -698,36 +698,69 @@ def run():
 
     print("notification")
 
-    # Explorer refuses a wrong cbSize by returning FALSE rather than reading
-    # past it, so this is the one number that has to be exactly right
-    struct_size = ctypes.sizeof(A._NOTIFYICONDATAW)
-    wide = ctypes.sizeof(ctypes.c_void_p) == 8
-    failures += not _check("the balloon struct matches Windows",
-                           (not wide) or struct_size == 976,
-                           "%d bytes" % struct_size)
-    failures += not _check("cbSize leads the struct",
-                           A._NOTIFYICONDATAW.cbSize.offset == 0,
-                           str(A._NOTIFYICONDATAW.cbSize.offset))
-    # the shell reads the text out of these - a shifted offset would show
-    # the wrong line rather than fail loudly
-    failures += not _check("the balloon text sits at the documented offset",
-                           A._NOTIFYICONDATAW.szInfo.offset == 304
-                           and A._NOTIFYICONDATAW.szInfoTitle.offset == 820,
-                           str((A._NOTIFYICONDATAW.szInfo.offset,
-                                A._NOTIFYICONDATAW.szInfoTitle.offset)))
-    # Shell_NotifyIcon is exported by shell32.  A reference to user32 would
-    # raise inside the try and be swallowed, so the feature would sit there
-    # looking intact while never doing anything.
-    failures += not _check("the balloon call is bound to shell32",
-                           hasattr(A._shell32, "Shell_NotifyIconW")
-                           and not hasattr(A._user32, "Shell_NotifyIconW"),
-                           "shell32 / user32")
-    failures += not _check("a notification without a window never raises",
-                           A.notify_balloon(0, "Raze", "body") is False
-                           and A.notify_clear(0) is False, "zero handle")
+    # The toast rides on WinRT through ctypes: combase.dll binds the entry
+    # points, the interface IIDs come from the SDK headers, and the payload
+    # reaches Windows as XML - so the bindings, the ids and the XML are the
+    # three things that have to be exactly right.
+    failures += not _check("the WinRT runtime is bound",
+                           A._combase is not None
+                           and hasattr(A._combase, "RoInitialize")
+                           and hasattr(A._combase, "WindowsCreateString"),
+                           "combase")
+    # the payload is built as a string, so escaping has to survive a parse:
+    # a stray & or < in a message would otherwise make Windows reject it
+    import xml.etree.ElementTree as ElementTree
+    try:
+        doc = ElementTree.fromstring(
+            A.toast_xml("Raze & co <one>", "it's a \"test\""))
+        texts = [t.text for t in doc.iter("text")]
+        template = doc.find(".//binding").get("template")
+        xml_ok = (texts == ['Raze & co <one>', 'it\'s a "test"']
+                  and template == "ToastGeneric")
+        xml_detail = str((texts, template))
+    except Exception as e:
+        xml_ok = False
+        xml_detail = str(e)
+    failures += not _check("the toast payload is well-formed XML",
+                           xml_ok, xml_detail)
+    # a bad IID string would raise inside _guid at toast time, where the
+    # caller only ever sees False - so parse them all here instead
+    try:
+        for iid in (A._IID_TOAST_MANAGER, A._IID_TOAST_NOTIFIER,
+                    A._IID_TOAST_FACTORY, A._IID_XML_DOCUMENT_IO,
+                    A._IID_XML_DOCUMENT):
+            A._guid(iid)
+        ids_ok = True
+        ids_detail = "5 iids"
+    except Exception as e:
+        ids_ok = False
+        ids_detail = str(e)
+    failures += not _check("the toast interface ids parse", ids_ok,
+                           ids_detail)
+    # with combase gone the refusal has to stay visible: _winrt_start must
+    # not latch a success it never had, or later checks would see a runtime
+    # that is not there
+    real_combase = A._combase
+    try:
+        A._combase = None
+        refused = A.notify_toast("Raze", "selftest")
+        latched = A._winrt_started
+    finally:
+        A._combase = real_combase
+    failures += not _check("a missing WinRT binding refuses without latching",
+                           refused is False and latched is False,
+                           str((refused, latched)))
+    # headless build of the real objects - Show is never called, so nothing
+    # reaches the screen or the notification platform
+    n_obj, t_obj = A._toast_objects("Raze", "selftest")
+    built = bool(n_obj) and bool(t_obj)
+    A._release(n_obj)
+    A._release(t_obj)
+    failures += not _check("a toast builds headless and is released",
+                           built, str((bool(n_obj), bool(t_obj))))
 
     # the shell answers whether now is a time to interrupt; a full-screen
-    # game (QUNS_BUSY) makes Explorer swallow a balloon that Shell_NotifyIcon
+    # game (QUNS_BUSY) makes Windows swallow a banner that the toast API
     # still reports as accepted, so Raze holds the message and retries
     failures += not _check("the notification state query is bound to shell32",
                            hasattr(A._shell32, "SHQueryUserNotificationState"),

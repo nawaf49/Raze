@@ -1175,20 +1175,13 @@ def do_apply_update(target, old_pid):
 # call leaks its state whenever the inter-key delay is zero.  SendInput posts
 # the whole batch atomically, so it stays exact at any speed.
 _user32 = ctypes.windll.user32
-# Shell_NotifyIcon is exported by shell32, not user32 - getting this wrong
-# is silent, because every call here is allowed to fail quietly
+# shell32 hosts SHQueryUserNotificationState - getting this wrong would be
+# silent, because every call here is allowed to fail quietly
 _shell32 = ctypes.windll.shell32
 try:
     # the default int restype would truncate a 64-bit window handle on x64,
     # which would then never compare equal to the real one
     _user32.GetForegroundWindow.restype = ctypes.c_void_p
-    # without these the icon filename is passed as narrow bytes, and the icon
-    # handle is cut down to 32 bits on the way back out
-    _user32.LoadImageW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p,
-                                   ctypes.c_uint, ctypes.c_int, ctypes.c_int,
-                                   ctypes.c_uint]
-    _user32.LoadImageW.restype = ctypes.c_void_p
-    _user32.DestroyIcon.argtypes = [ctypes.c_void_p]
 except Exception:
     pass
 _KEYEVENTF_KEYUP = 0x0002
@@ -1305,19 +1298,53 @@ def is_foreground(hwnd):
 
 
 # --- the notification the automatic stops raise -------------------------- #
-# Balloons go through Shell_NotifyIcon rather than a library: the process is
-# meant to sit there for years and has no business taking a dependency, or
-# spawning PowerShell, to put one line on the screen.
+# Toasts go through the modern Windows.UI.Notifications API, driven by hand
+# over ctypes rather than a library or a spawned shell: the process is meant
+# to sit there for years and has no business taking a dependency, or spawning
+# PowerShell, to put one line on the screen.  The old Shell_NotifyIcon
+# NIF_INFO balloon channel is dead on Windows 26H2 (build 26300) - every call
+# answers TRUE and nothing ever renders, proven live on this machine while a
+# WinRT toast from the same machine showed instantly.  The interface IIDs and
+# vtable slots below come from the Windows SDK headers (windows.ui.notifications.h,
+# windows.data.xml.dom.h): IInspectable owns slots 0-5 everywhere, so each
+# interface's own methods start at 6.
 
-_NIM_ADD = 0
-_NIM_MODIFY = 1
-_NIM_DELETE = 2
-_NIF_ICON = 0x00000001
-_NIF_TIP = 0x00000004
-_NIF_INFO = 0x00000010
-_NIIF_INFO = 0x00000001
-_IMAGE_ICON = 1
-_LR_LOADFROMFILE = 0x0010
+TOAST_APP_ID = "Raze"
+
+# IToastNotificationManagerStatics - slot 6 is CreateToastNotifier (no arg),
+# slot 7 is CreateToastNotifierWithId, the one that takes an app id
+_IID_TOAST_MANAGER = "50AC103F-D235-4598-BBEF-98FE4D1A3AD4"
+# IToastNotifier - slot 6 is Show, slot 7 is Hide
+_IID_TOAST_NOTIFIER = "75927B93-03F3-41EC-91D3-6E5BAC1B38E7"
+# IToastNotificationFactory - slot 6 is CreateToastNotification
+_IID_TOAST_FACTORY = "04124B20-82C6-4229-B109-FD9ED4662B53"
+# IXmlDocumentIO - slot 6 is LoadXml.  IXmlDocument is only ever a
+# QueryInterface target, never called into
+_IID_XML_DOCUMENT_IO = "6CD0E74E-EE65-4489-9EBF-CA43E87BA637"
+_IID_XML_DOCUMENT = "F7F3A506-1E87-42D6-BCFB-B8C809FA5494"
+
+try:
+    # combase.dll hosts the WinRT entry points; without explicit argtypes
+    # WindowsCreateString's output pointer would be passed as a 32-bit int
+    # and the HSTRING would be written over whatever sits beside it
+    _combase = ctypes.windll.combase
+    _combase.RoInitialize.argtypes = [ctypes.c_uint]
+    _combase.RoInitialize.restype = ctypes.c_long
+    _combase.RoActivateInstance.argtypes = [ctypes.c_void_p,
+                                            ctypes.POINTER(ctypes.c_void_p)]
+    _combase.RoActivateInstance.restype = ctypes.c_long
+    _combase.RoGetActivationFactory.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    _combase.RoGetActivationFactory.restype = ctypes.c_long
+    _combase.WindowsCreateString.argtypes = [
+        ctypes.c_wchar_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p)]
+    _combase.WindowsCreateString.restype = ctypes.c_long
+    _combase.WindowsDeleteString.argtypes = [ctypes.c_void_p]
+    _combase.WindowsDeleteString.restype = ctypes.c_long
+except Exception:
+    # a machine without combase never shows a toast; the run itself is
+    # unaffected, and selftest proves the refusal path stays honest
+    _combase = None
 
 
 class _GUID(ctypes.Structure):
@@ -1325,93 +1352,233 @@ class _GUID(ctypes.Structure):
                 ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
 
 
-class _NOTIFYICONDATAW(ctypes.Structure):
-    # Field for field the Vista+ NOTIFYICONDATAW.  sizeof comes to 976 on
-    # 64-bit, which selftest asserts - Explorer rejects a wrong cbSize by
-    # returning FALSE rather than reading past it, so a mistake degrades to
-    # no notification instead of a broken shell.
-    _fields_ = [
-        ("cbSize", ctypes.c_ulong),
-        ("hWnd", ctypes.c_void_p),
-        ("uID", ctypes.c_ulong),
-        ("uFlags", ctypes.c_ulong),
-        ("uCallbackMessage", ctypes.c_ulong),
-        ("hIcon", ctypes.c_void_p),
-        ("szTip", ctypes.c_wchar * 128),
-        ("dwState", ctypes.c_ulong),
-        ("dwStateMask", ctypes.c_ulong),
-        ("szInfo", ctypes.c_wchar * 256),
-        ("uTimeout", ctypes.c_ulong),
-        ("szInfoTitle", ctypes.c_wchar * 64),
-        ("dwInfoFlags", ctypes.c_ulong),
-        ("guidItem", _GUID),
-        ("hBalloonIcon", ctypes.c_void_p),
-    ]
+def _com(obj, slot, restype, *argtypes):
+    """Bind one vtable slot of a COM interface pointer to a callable.
+
+    The call itself always takes the interface pointer as its first
+    argument, exactly like the SDK's own macros do.
+    """
+    proto = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)
+    return proto(_vt(obj, slot))
 
 
-def _icon_from(path):
-    """Load the app icon, or 0 - a missing icon must never block the call."""
+def _hstr(text):
+    """A WinRT HSTRING from str, or 0 - never raises."""
+    if _combase is None:
+        return 0
     try:
-        return _user32.LoadImageW(0, path, _IMAGE_ICON, 0, 0,
-                                  _LR_LOADFROMFILE) or 0
+        out = ctypes.c_void_p()
+        # the length is UTF-16 code units, not bytes and not characters
+        if _combase.WindowsCreateString(text, len(text),
+                                        ctypes.byref(out)) < 0:
+            return 0
+        return out.value or 0
     except Exception:
         return 0
 
 
-def notify_balloon(hwnd, title, body, icon_path=None, uid=1):
-    """Raise a Windows notification. Returns True if Windows took it.
+def _del_hstr(h):
+    if h and _combase is not None:
+        try:
+            _combase.WindowsDeleteString(h)
+        except Exception:
+            pass
+
+
+def _release(obj):
+    """Release a COM interface pointer we own - vtable slot 2, everywhere."""
+    if obj:
+        try:
+            _com(obj, 2, ctypes.c_long)(obj)
+        except Exception:
+            pass
+
+
+def _qi(obj, iid_text):
+    """QueryInterface for an interface named by IID text, or 0."""
+    try:
+        out = ctypes.c_void_p()
+        # slot 0: IUnknown is QueryInterface 0, AddRef 1, Release 2 - slot 3
+        # is IInspectable's GetIids, which answers S_OK and writes an IID
+        # array pointer where an interface pointer was expected
+        hr = _com(obj, 0, ctypes.c_long, ctypes.c_void_p,
+                  ctypes.c_void_p)(obj, ctypes.byref(_guid(iid_text)),
+                                   ctypes.byref(out))
+        if hr < 0:
+            return 0
+        return out.value or 0
+    except Exception:
+        return 0
+
+
+def _xml_text(s):
+    """Escape one text node - the payload reaches Windows as XML."""
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;")
+            .replace("'", "&apos;"))
+
+
+def toast_xml(title, body):
+    """The toast payload: one title line, one body line, no chrome."""
+    return ('<toast><visual><binding template="ToastGeneric">'
+            '<text>%s</text><text>%s</text>'
+            '</binding></visual></toast>') % (_xml_text(title),
+                                             _xml_text(body))
+
+
+_winrt_started = False
+
+
+def _winrt_start():
+    """Bring the WinRT runtime up once.  True when toasts are possible."""
+    global _winrt_started
+    if _winrt_started:
+        return True
+    if _combase is None:
+        # never latch without combase: a selftest that nulls the binding
+        # has to keep seeing the refusal, not a cached success
+        return False
+    try:
+        # ROINIT_SINGLETHREADED - everything here runs on the Tk thread
+        hr = _combase.RoInitialize(1)
+        # RPC_E_CHANGED_MODE means the thread already holds the other
+        # apartment; WinRT calls still work, so that counts as started
+        if hr >= 0 or hr == -2147417846:
+            _winrt_started = True
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def _activate(cls_text):
+    """RoActivateInstance for a WinRT class, or 0.  Never raises."""
+    hcls = _hstr(cls_text)
+    if not hcls:
+        return 0
+    try:
+        out = ctypes.c_void_p()
+        if _combase.RoActivateInstance(hcls, ctypes.byref(out)) < 0:
+            return 0
+        return out.value or 0
+    except Exception:
+        return 0
+    finally:
+        _del_hstr(hcls)
+
+
+def _factory(cls_text, iid_text):
+    """RoGetActivationFactory for a WinRT class, or 0.  Never raises."""
+    hcls = _hstr(cls_text)
+    if not hcls:
+        return 0
+    try:
+        iid = _guid(iid_text)
+        out = ctypes.c_void_p()
+        if _combase.RoGetActivationFactory(hcls, ctypes.byref(iid),
+                                           ctypes.byref(out)) < 0:
+            return 0
+        return out.value or 0
+    except Exception:
+        return 0
+    finally:
+        _del_hstr(hcls)
+
+
+def _toast_objects(title, body):
+    """Build (notifier, toast), or (0, 0).  Caller owns both pointers.
+
+    Every HSTRING, document and factory in here is released before
+    returning; only the two objects the Show call needs survive.
+    """
+    if not _winrt_start():
+        return 0, 0
+    doc = io = factory = manager = toast = notifier = 0
+    hxml = haumid = 0
+    try:
+        # a document, then its IO interface to fill with our payload
+        doc = _activate("Windows.Data.Xml.Dom.XmlDocument")
+        if not doc:
+            return 0, 0
+        io = _qi(doc, _IID_XML_DOCUMENT_IO)
+        if not io:
+            return 0, 0
+        hxml = _hstr(toast_xml(title, body))
+        if not hxml:
+            return 0, 0
+        if _com(io, 6, ctypes.c_long, ctypes.c_void_p)(io, hxml) < 0:
+            return 0, 0
+
+        # the toast factory: document in, toast out
+        factory = _factory("Windows.UI.Notifications.ToastNotification",
+                           _IID_TOAST_FACTORY)
+        if not factory:
+            return 0, 0
+        raw = ctypes.c_void_p()
+        if _com(factory, 6, ctypes.c_long, ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_void_p))(factory, doc,
+                                                 ctypes.byref(raw)) < 0:
+            return 0, 0
+        toast = raw.value or 0
+
+        # the manager, then a notifier attributed to Raze's own app id
+        manager = _factory("Windows.UI.Notifications.ToastNotificationManager",
+                           _IID_TOAST_MANAGER)
+        if not manager:
+            _release(toast)
+            return 0, 0
+        haumid = _hstr(TOAST_APP_ID)
+        if not haumid:
+            _release(toast)
+            return 0, 0
+        raw = ctypes.c_void_p()
+        if _com(manager, 7, ctypes.c_long, ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_void_p))(manager, haumid,
+                                                 ctypes.byref(raw)) < 0:
+            _release(toast)
+            return 0, 0
+        notifier = raw.value or 0
+        return notifier, toast
+    except Exception:
+        _release(notifier)
+        _release(toast)
+        return 0, 0
+    finally:
+        _release(manager)
+        _release(factory)
+        _release(io)
+        _release(doc)
+        _del_hstr(hxml)
+        _del_hstr(haumid)
+
+
+def notify_toast(title, body):
+    """Raise a Windows toast banner.  Returns True if Windows took it.
 
     Everything in here is best effort: the run is already over, and the
     interface still shows what happened, so a refused notification is never
     allowed to turn into an error the caller has to deal with.
     """
-    if not hwnd:
+    notifier, toast = _toast_objects(title, body)
+    if not notifier or not toast:
+        _release(notifier)
+        _release(toast)
         return False
     try:
-        nid = _NOTIFYICONDATAW()
-        nid.cbSize = ctypes.sizeof(_NOTIFYICONDATAW)
-        nid.hWnd = hwnd
-        nid.uID = uid
-
-        hicon = _icon_from(icon_path) if icon_path else 0
-        try:
-            if hicon:
-                nid.hIcon = hicon
-                nid.szTip = "Raze"
-                nid.uFlags = _NIF_ICON | _NIF_TIP
-                # an entry has to exist before a balloon can hang off it
-                _shell32.Shell_NotifyIconW(_NIM_ADD, ctypes.byref(nid))
-        finally:
-            if hicon:
-                _user32.DestroyIcon(hicon)
-
-        nid.uFlags = _NIF_INFO
-        nid.szInfo = body[:255]
-        nid.szInfoTitle = title[:63]
-        nid.dwInfoFlags = _NIIF_INFO
-        return bool(_shell32.Shell_NotifyIconW(_NIM_MODIFY, ctypes.byref(nid)))
+        hr = _com(notifier, 6, ctypes.c_long, ctypes.c_void_p)(notifier,
+                                                               toast)
+        return hr >= 0
     except Exception:
         return False
-
-
-def notify_clear(hwnd, uid=1):
-    """Drop the tray entry the notification created."""
-    if not hwnd:
-        return False
-    try:
-        nid = _NOTIFYICONDATAW()
-        nid.cbSize = ctypes.sizeof(_NOTIFYICONDATAW)
-        nid.hWnd = hwnd
-        nid.uID = uid
-        return bool(_shell32.Shell_NotifyIconW(_NIM_DELETE, ctypes.byref(nid)))
-    except Exception:
-        return False
+    finally:
+        _release(toast)
+        _release(notifier)
 
 
 # The shell's own verdict on whether now is a time to interrupt.  A
 # full-screen game (QUNS_BUSY), a locked screen, quiet hours or presentation
-# settings make Explorer swallow a balloon while Shell_NotifyIcon still
-# answers TRUE - accepted, and then never shown.  That is exactly what
+# settings make Windows swallow a banner while the toast API still answers
+# S_OK - accepted, and then never shown.  That is exactly what
 # "notifications don't work" looked like from in here: Raze did its part and
 # Windows sat on it, so the message now waits for the screen to free up.
 _QUNS_ACCEPTS_NOTIFICATIONS = 5
@@ -2770,10 +2937,6 @@ class AutoTyper:
         self.stop_event.set()
         try:
             self.hotkey_listener.stop()
-        except Exception:
-            pass
-        try:
-            notify_clear(getattr(self, "_raze_hwnd", 0))
         except Exception:
             pass
         self._save_config()
@@ -4329,18 +4492,9 @@ class AutoTyper:
         """Surface a stop the user did not ask for, best effort.
 
         Pressing F9 already told them what they wanted to know, so only the
-        endings they did not choose raise one.  The handle is the one captured
-        while the window was mapped: by the time this runs Raze is minimised,
-        and this is the address Windows still recognises.
+        endings they did not choose raise one.  No window handle is needed:
+        the banner is attributed to Raze's own app id, not to a tray entry.
         """
-        hwnd = getattr(self, "_raze_hwnd", 0)
-        if not hwnd:
-            try:
-                hwnd = int(self.root.wm_frame(), 16)
-            except Exception:
-                hwnd = 0
-        if not hwnd:
-            return
         if not notifications_allowed():
             # Windows would only swallow it - a game owns the screen, or the
             # session is locked.  Hold it; the heartbeat sends it the moment
@@ -4348,13 +4502,16 @@ class AutoTyper:
             self._pending_toast = (title, body)
             self._toast_retry = time.monotonic()
             return
-        self._fire_toast(hwnd, title, body)
+        self._fire_toast(title, body)
 
-    def _fire_toast(self, hwnd, title, body):
-        self._pending_toast = None
-        if notify_balloon(hwnd, title, body, resource_path("raze.ico")):
-            # the entry would otherwise sit in the notification area forever
-            self.root.after(7000, lambda h=hwnd: notify_clear(h))
+    def _fire_toast(self, title, body):
+        # a refused send is held, not dropped: the retry path gives it
+        # another chance instead of losing the announcement on the floor
+        if notify_toast(title, body):
+            self._pending_toast = None
+        else:
+            self._pending_toast = (title, body)
+            self._toast_retry = time.monotonic()
 
     def _retry_pending_toast(self):
         """Send a held notification once Windows says it will show it."""
@@ -4366,12 +4523,8 @@ class AutoTyper:
         self._toast_retry = now
         if not notifications_allowed():
             return
-        hwnd = getattr(self, "_raze_hwnd", 0)
-        if not hwnd:
-            self._pending_toast = None
-            return
         title, body = self._pending_toast
-        self._fire_toast(hwnd, title, body)
+        self._fire_toast(title, body)
 
     def _tick_inner(self):
         # the install worker's answer arrives here, never through Tk from
@@ -4561,11 +4714,6 @@ class AutoTyper:
             self.typing = False
             self._history_dirty = False
             self._save_config()
-        except Exception:
-            pass
-        # a notification still on screen would otherwise outlive the app
-        try:
-            notify_clear(getattr(self, "_raze_hwnd", 0))
         except Exception:
             pass
         # and so would a presence: the profile must not go on showing a

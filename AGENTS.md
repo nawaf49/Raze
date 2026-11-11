@@ -73,7 +73,7 @@ These are not preferences. Breaking one silently ruins the product.
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
 | `selftest.py` | 128 headless checks, run via `Raze.exe --selftest` |
-| `pause_and_toast.py` | 56 checks: pause/resume/toast routing, a tab-in stop continued by the resume key and begun again by the start key, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
+| `pause_and_toast.py` | 57 checks: pause/resume/toast routing, a tab-in stop continued by the resume key and begun again by the start key, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
 | `layout_check.py` | 25 checks: the window fits the work area, the uptime on the status line, the four keycaps, the hotkeys card and button hover backgrounds, captures both tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `rpc.py` | Discord presence: named pipe over ctypes, its own thread |
@@ -428,23 +428,51 @@ The tab-in one names the key that continues the run — "Stopped - switch to
 your app first, then press F7 to continue" — because that stop is not the
 end of the session.
 
-- `Shell_NotifyIconW` is exported by **shell32.dll, not user32.dll**. Every
-  call here sits inside a `try/except`, so pointing at the wrong DLL was
-  invisible: it raised and was swallowed, and the feature sat there looking
-  intact while never firing. `selftest` now asserts it is bound to `_shell32`.
-- `_NOTIFYICONDATAW` is **976 bytes on x64**, `szInfo` at offset 304,
-  `szInfoTitle` at 820. `selftest` asserts all three. Explorer rejects a wrong
-  `cbSize` with `FALSE` rather than reading past it.
-- The tray entry is deleted 7 s later and on app close.
-- `SHQueryUserNotificationState` decides whether Windows will show a banner at
-  all. A full-screen game (VALORANT: `QUNS_BUSY`), a locked screen or quiet
-  hours make Explorer swallow a balloon while `Shell_NotifyIconW` still answers
-  TRUE — accepted, then never shown, which is exactly what "notifications don't
-  work" looked like. `_toast` therefore holds the message in `_pending_toast`
-  and `_retry_pending_toast`, called from every heartbeat, re-asks every
-  `TOAST_RETRY_S` (2 s) until the state is `QUNS_ACCEPTS_NOTIFICATIONS` (5).
-  A failed query counts as allowed: never hold a notification hostage to a
-  query that did not answer. `_start` clears any pending message — a new
+- **Balloons are dead on modern Windows; the channel moved to WinRT.**
+  `Shell_NotifyIcon` `NIF_INFO` balloons were proven dead on this machine's
+  Windows 26H2 (build 26300): every call answers `TRUE` and nothing ever
+  renders — verified live against a WinRT toast that showed instantly from
+  the same machine. `notify_balloon`/`notify_clear` and the whole
+  `_NOTIFYICONDATAW` struct are gone; `notify_toast` drives
+  `Windows.UI.Notifications` through ctypes COM instead — no dependency and
+  no spawned PowerShell (hard rule 6).
+- **The COM is hand-rolled, and the numbers come from the SDK headers, not
+  memory.** `combase.dll` binds `RoInitialize` / `RoActivateInstance` /
+  `RoGetActivationFactory` / `WindowsCreateString` (explicit `argtypes` —
+  the default `c_int` would truncate the HSTRING out-pointer). IInspectable
+  owns vtable slots 0–5 everywhere, so each interface's own method starts
+  at **slot 6**: `LoadXml` on `IXmlDocumentIO`, `Show` on `IToastNotifier`,
+  `CreateToastNotification` on `IToastNotificationFactory`, and **slot 7**
+  `CreateToastNotifierWithId` on `IToastNotificationManagerStatics` (slot 6
+  is the no-arg overload). IIDs are literals beside the code, read from
+  `windows.ui.notifications.h` / `windows.data.xml.dom.h` in the
+  tpn/winsdk-10 SDK mirror. Two traps cost real crashes: `QueryInterface`
+  is **slot 0**, not 3 — slot 3 is IInspectable's `GetIids`, which answers
+  `S_OK` and writes an IID-array pointer where an interface pointer was
+  expected, so the next vtable read dies on GUID bytes; and every interface
+  pointer must be released exactly once on every path, including the early
+  returns taken after the toast object already exists.
+- **The banner is attributed to `TOAST_APP_ID = "Raze"`**, not to a window:
+  no tray icon, no 7 s cleanup, no `_raze_hwnd` — `_toast` needs no handle
+  at all. `selftest` builds the objects headless (`_toast_objects`) and
+  releases them; that path creates no `Notifications\Settings` registry key
+  and shows nothing, so it is safe inside the suite.
+- The payload is plain XML (`toast_xml`): a `ToastGeneric` binding with one
+  title and one body line, every message escaped — a stray `&` would make
+  Windows reject the toast outright. `selftest` parses it back with
+  `xml.etree.ElementTree`, and the same check covers the escaping.
+- `SHQueryUserNotificationState` decides whether Windows will show a banner
+  at all. A full-screen game (VALORANT: `QUNS_BUSY`), a locked screen or
+  quiet hours make Windows swallow a banner while the toast API still
+  answers `S_OK` — accepted, then never shown, which is exactly what
+  "notifications don't work" looked like. `_toast` therefore holds the
+  message in `_pending_toast` and `_retry_pending_toast`, called from every
+  heartbeat, re-asks every `TOAST_RETRY_S` (2 s) until the state is
+  `QUNS_ACCEPTS_NOTIFICATIONS` (5). A failed query counts as allowed: never
+  hold a notification hostage to a query that did not answer. **A send the
+  API itself refuses is held the same way** — `_fire_toast` clears the
+  pending message only on success, so a transient failure retries instead
+  of dropping the announcement. `_start` clears any pending message — a new
   session supersedes an announcement that is about to be out of date — and
   so do `_stop` (F9 discards the announcement with the session) and
   `_resume` (the key it named has just been pressed).
@@ -676,8 +704,8 @@ being verified.
 
 - Never send a global keystroke, move the mouse, steal focus, or surface a
   window on the desktop.
-- Never fire a live toast during testing. Validate the struct and the API
-  return codes instead, and **ask before** showing one.
+- Never fire a live toast during testing. Validate the payload, the bindings
+  and the API return codes instead, and **ask before** showing one.
 - **Never call `do_install` / `do_uninstall` from a harness** — they write
   to the tester's machine (registry key, shortcuts, a copied exe). The same
   goes for `do_apply_update`: it rewrites the exe on disk and spawns
@@ -701,10 +729,10 @@ being verified.
   — the uptime label, `_up_since`, `_tab_stopped` — has to exist on it, and
   out there an `AttributeError` is not swallowed.
 - **Four harnesses are committed** next to it, and all of them are
-  non-intrusive by construction: `send_enter`, `notify_balloon` and
+  non-intrusive by construction: `send_enter`, `notify_toast` and
   `is_foreground` are replaced with recorders, the window is built at alpha 0,
   the presence seam is off, and nothing is ever typed, surfaced or focused.
-  - `pause_and_toast.py` — 56 checks. The session card carries its four
+  - `pause_and_toast.py` — 57 checks. The session card carries its four
     counters, the `LAST SENT` box and the loop counter (an orphaned block once
     left the card's body unreachable after a `return`, and every other suite
     stayed green because the heartbeat swallows the `AttributeError` that
@@ -713,7 +741,8 @@ being verified.
     resume, start-while-paused does nothing, F9 is silent, the two endings
     the user did not choose do toast, the session header's loop counter reads
     finite, infinite and clamped, and a notification Windows refused is held
-    and sent once the screen frees up; then, under a run already under way,
+    and sent once the screen frees up while a send the API itself refuses is
+    held too; then, under a run already under way,
     an interval shortened inside its own wait, a selection-mode flip through
     the real checkbox, a pool edit through the real binding and a Loop change
     through its setter all land on that same run. A tab-in stop is then

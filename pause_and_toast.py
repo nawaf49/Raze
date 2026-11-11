@@ -34,7 +34,7 @@ failures = []
 typed = []          # what the worker believes it sent
 stamps = []         # when it believes it sent it - the interval check reads these
 toasts = []         # what _toast asked Windows to show
-balloons = []       # what reached notify_balloon itself
+balloons = []       # what reached notify_toast itself
 
 
 def check(label, ok, detail=""):
@@ -47,8 +47,7 @@ def check(label, ok, detail=""):
 def main():
     # nothing may reach the keyboard, and nothing may reach the desktop
     A.send_enter = lambda: True
-    A.notify_balloon = lambda *a, **k: False
-    A.notify_clear = lambda *a, **k: True
+    A.notify_toast = lambda *a, **k: False
     # the harness window is on-screen and does take focus, which is precisely
     # what the real guard is meant to refuse.  This harness is about pause and
     # the toast routing - the guard has its own coverage in selftest - so the
@@ -488,7 +487,7 @@ def main():
     #  a notification Windows refuses is held, then sent when it frees up
     # ---------------------------------------------------------------- #
     def held_toast():
-        A.notify_balloon = lambda *a, **k: balloons.append(a) or True
+        A.notify_toast = lambda *a, **k: balloons.append(a) or True
         # Windows answers the way it does while a full-screen game is up
         A.notifications_allowed = lambda: False
         del balloons[:]
@@ -508,11 +507,25 @@ def main():
 
     def verify_held_sent():
         check("the held message goes out once the screen is free",
-              len(balloons) == 1 and balloons[0][1] == "Raze"
-              and balloons[0][2] == "Finished - 1 message sent",
+              len(balloons) == 1 and balloons[0][0] == "Raze"
+              and balloons[0][1] == "Finished - 1 message sent",
               str(balloons))
         check("and nothing is left waiting",
               app._pending_toast is None, str(app._pending_toast))
+
+        root.after(200, refused_fire)
+
+    def refused_fire():
+        # Windows can also refuse at the API itself rather than through the
+        # state query; that has to hold the message too instead of dropping
+        # an announcement on the floor
+        A.notify_toast = lambda *a, **k: False
+        app._pending_toast = None
+        app._toast_retry = 0.0
+        A.AutoTyper._fire_toast(app, "Raze", "Pool ran out")
+        check("a refused send keeps the message waiting",
+              app._pending_toast == ("Raze", "Pool ran out"),
+              str(app._pending_toast))
 
         root.after(200, done)
 
