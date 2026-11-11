@@ -851,13 +851,14 @@ open — the single-instance check reports honestly in both states.
   say the same number — the registry's DisplayVersion, the file's
   Properties > Details and the Settings > Apps entry all read them, and a
   mismatch ships visible in three places at once.
-- **The pitch changed at v1.16 — settled with the user, do not reopen it.**
-  The old first line "Single file. No install, no folder to keep." died with
-  the self-installer: the shipped line is now "Single file. First run offers
-  a one-click install — or run it from anywhere." and the public README's
-  Download section explains the first-run offer (plus a bullet in *What it
-  does*), wording approved verbatim before v1.16 went out. The hotkeys table
-  and the tab-out line under *Releasing* stay as they are.
+- **The pitch changed at v1.18 — settled with the user, do not reopen it.**
+  v1.16's "First run offers a one-click install — or run it from anywhere."
+  died with the install offer: the shipped line is now "Single file. First
+  run installs itself — nothing to click." (approved verbatim). The public
+  README's Download section explains the automatic first-run install (plus a
+  bullet in *What it does*) — drafted at release time and approved before
+  v1.18 goes out. The hotkeys table and the tab-out line under *Releasing*
+  stay as they are.
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
 - **Exactly one release exists at a time.** When the next one ships, delete the
@@ -896,7 +897,7 @@ open — the single-instance check reports honestly in both states.
   the notes repeat neither them nor a checksum:
 
 ```text
-Single file. First run offers a one-click install — or run it from anywhere.
+Single file. First run installs itself — nothing to click.
 
 ## Hotkeys
 
