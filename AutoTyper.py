@@ -618,14 +618,16 @@ def install_plan():
     }
 
 
-def install_prompt_needed(exe, asked, registered):
-    """Whether the one-time install question may be asked.
+def install_needed(exe, registered):
+    """Whether a first run should install itself, silently.
 
-    Never for a dev run (exe is None), never once an answer was given,
-    never for something Windows already lists, and never for a copy that is
-    already running from its own install home.
+    Never for a dev run (exe is None), never for something Windows
+    already lists, and never for a copy that is already running from
+    its own install home.  There is no answer flag: a failed install
+    is retried on the next run, and a refusal recorded by an old
+    config no longer exempts anyone - the install is enforced.
     """
-    if not exe or asked or registered:
+    if not exe or registered:
         return False
     return not _same_file(exe, install_exe_path())
 
@@ -3890,25 +3892,19 @@ class AutoTyper:
             return False
         return state["ok"]
 
-    def _maybe_offer_install(self):
-        """Ask once whether Raze should become a real installed program.
+    def _auto_install(self):
+        """Install Raze on the first run, with nothing to ask.
 
         Only ever reached from __main__, and only ever for a frozen exe
-        that Windows does not list yet - install_prompt_needed has the
-        full list of reasons not to ask.  Either answer ends the question
-        for good.
+        that Windows does not list yet - install_needed has the full
+        list of reasons not to.  Success is silent: the copy simply
+        carries on as an installed program.  A failure reaches the
+        heartbeat, which shows the box.
         """
         try:
-            if not install_prompt_needed(running_exe(), self.install_asked,
-                                         registry_installed()):
+            if not install_needed(running_exe(), registry_installed()):
                 return
-            yes = self._confirm("Install Raze",
-                                "Adds Raze to your Start Menu and to Settings.",
-                                confirm_text="Install", cancel_text="Not now")
-            self.install_asked = True
-            self._save_config()
-            if yes:
-                self._install_now()
+            self._install_now()
         except Exception:
             pass
 
@@ -4544,17 +4540,14 @@ class AutoTyper:
 
     def _tick_inner(self):
         # the install worker's answer arrives here, never through Tk from
-        # its own thread - and it is first because the report is a modal:
-        # nothing may start under a dialog that just took focus
+        # its own thread - and it is first because a failure is a modal:
+        # nothing may start under a dialog that just took focus.  Success
+        # is silent - the copy simply carries on as an installed program
         install_done = getattr(self, "_install_done", None)
         if install_done is not None:
             self._install_done = None
             ok, err = install_done
-            if ok:
-                self._confirm("Installed",
-                              "Raze is in your Start Menu and in Settings.",
-                              confirm_text="Done", cancel_text=None)
-            else:
+            if not ok:
                 # one line, no wrap in the artwork - keep it to the room
                 detail = (err or "").strip()
                 if not detail or len(detail) > 52:
@@ -4845,15 +4838,16 @@ if __name__ == "__main__":
     # heartbeat applies once no run is in flight
     app._update_start()
 
-    # the one-time install question, asked after the opening sequence has
-    # finished - polling _intro_done first, then one settled beat, so the
-    # modal never lands on a window still assembling itself.  It answers
-    # itself "no" for dev runs, answered configs and installed copies.
-    def _offer_install():
+    # the enforced first-run install, kicked off after the opening sequence
+    # has finished - polling _intro_done first, then one settled beat, so
+    # the file and registry work never lands on a window still assembling
+    # itself.  It answers itself "no" for dev runs, listed installs and
+    # copies already running from their install home.
+    def _start_install():
         if not getattr(app, "_intro_done", False):
-            root.after(200, _offer_install)
+            root.after(200, _start_install)
             return
-        root.after(700, app._maybe_offer_install)
-    root.after(600, _offer_install)
+        root.after(700, app._auto_install)
+    root.after(600, _start_install)
 
     root.mainloop()

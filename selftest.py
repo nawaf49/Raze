@@ -981,20 +981,42 @@ def run():
         failures += not _check("a dev run has no install source",
                                A.running_exe() is None,
                                str(A.running_exe()))
-    # the five gates of the one-time question, each on its own - only a
-    # fresh, unlisted, unanswered download copy is ever offered install
+    # the three gates of the enforced install, each on its own - only a
+    # fresh, unlisted download copy outside its install home installs
     fresh = r"C:\Users\someone\Downloads\Raze.exe"
-    failures += not _check("a dev run is never offered an install",
-                           not A.install_prompt_needed(None, False, False))
-    failures += not _check("an answered question is not asked again",
-                           not A.install_prompt_needed(fresh, True, False))
-    failures += not _check("a listed install is not offered again",
-                           not A.install_prompt_needed(fresh, False, True))
-    failures += not _check("the installed copy does not offer itself",
-                           not A.install_prompt_needed(plan["target"],
-                                                       False, False))
-    failures += not _check("a fresh download is offered the install",
-                           A.install_prompt_needed(fresh, False, False))
+    failures += not _check("a dev run never installs",
+                           not A.install_needed(None, False))
+    failures += not _check("a listed install is not installed again",
+                           not A.install_needed(fresh, True))
+    failures += not _check("the installed copy does not install itself",
+                           not A.install_needed(plan["target"], False))
+    failures += not _check("a fresh download installs itself",
+                           A.install_needed(fresh, False))
+    # the entry point has to consult that gate: a dev run must never get
+    # as far as starting the worker, and a real download must.  The probe
+    # replaces _install_now, so do_install is never touched
+    class _InstallProbe:
+        started = 0
+
+        def _install_now(self):
+            _InstallProbe.started += 1
+    probe = _InstallProbe()
+    real_running_exe = A.running_exe
+    real_registry_installed = A.registry_installed
+    try:
+        A.AutoTyper._auto_install(probe)
+        dev_started = _InstallProbe.started
+        A.running_exe = lambda: fresh
+        A.registry_installed = lambda: False
+        A.AutoTyper._auto_install(probe)
+        fresh_started = _InstallProbe.started
+    finally:
+        A.running_exe = real_running_exe
+        A.registry_installed = real_registry_installed
+    failures += not _check(
+        "the install worker starts only for a real download",
+        dev_started == 0 and fresh_started == 1,
+        str((dev_started, fresh_started)))
 
     print("update")
     # Read-only throughout: the checker thread downloads and the apply

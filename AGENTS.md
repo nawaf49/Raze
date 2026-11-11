@@ -542,9 +542,9 @@ payload that is unpacked from scratch on every launch.
 `start_key`, `stop_key`, `pause_key`, `resume_key`, `messages`, `history`,
 `daily`, `install_asked`.
 
-- `install_asked` is the one-time install question's answer flag (see
-  *Install*). It is written the moment the user picks Install **or** Not
-  now, so the question is asked exactly once per user, ever.
+- `install_asked` is vestigial (see *Install*): the install question is
+  gone, but the key stays readable and written on save — a config that
+  carries it keeps carrying it — and nothing gates on it any more.
 
 - `total_secs` used to be here: lifetime typing seconds, which the presence
   timer counted from. The timer is the app's own uptime now (see *Discord
@@ -578,16 +578,18 @@ Settings > Apps when a per-user uninstall key names it, and only shows it
 in the Start Menu when a .lnk points at it — so the exe installs *itself*,
 once, on first run. Per-user throughout: no admin, no UAC, no second file.
 
-- **The question.** `__main__` polls `_intro_done` (200 ms beats), then
-  waits one settled 700 ms, then calls `_maybe_offer_install`. It shows one
-  modal — title "Install Raze", message "Adds Raze to your Start Menu and
-  to Settings.", pills **Install** / **Not now** — and whichever pill is
-  picked sets `install_asked` in the config, so the question is asked
-  exactly once per user, ever. The gate is
-  `install_prompt_needed(exe, asked, registered)`: never for a dev run
-  (`running_exe()` returns None unless `sys.frozen`), never after an
-  answer, never when the registry already lists Raze, and never when the
-  running file already *is* the installed copy.
+- **No question — the install is enforced.** `__main__` polls
+  `_intro_done` (200 ms beats), then waits one settled 700 ms, then calls
+  `_auto_install`, which starts the worker the moment the gate passes: no
+  modal, no pill, no way to decline. The gate is
+  `install_needed(exe, registered)`: never for a dev run (`running_exe()`
+  returns None unless `sys.frozen`), never when the registry already lists
+  Raze, and never when the running file already *is* the installed copy.
+  There is deliberately **no answer flag** — a failed install is retried on
+  the next run, and a "Not now" recorded by v1.17's config no longer
+  exempts anyone (`install_asked` stays in the config, read and written,
+  but nothing reads it as a gate). Success is silent; only a failure raises
+  the box, from `_tick_inner`.
 - **What an install writes**, all computed read-only by `install_plan()`:
   a copy at `%LOCALAPPDATA%\Programs\Raze\Raze.exe`; `Raze.lnk` in the
   Start Menu's **Programs** folder (`CSIDL_PROGRAMS`) and on the Desktop;
@@ -621,8 +623,8 @@ once, on first run. Per-user throughout: no admin, no UAC, no second file.
 - **The thread rule holds.** `do_install` runs on a worker thread (files
   and registry are not Tk work) and never touches Tk: it only sets
   `_install_done = (ok, err)`, and `_tick_inner` consumes it first thing —
-  before the start request, because the report is a modal and nothing may
-  start under a dialog that just took focus.
+  before the start request, because a failure is a modal and nothing may
+  start under a dialog that just took focus. Success consumes silently.
 - **`--install` / `--uninstall` run before `acquire_single_instance`** in
   `__main__` — they must never contend for the mutex with a live app — and
   report through native `MessageBoxW` (`_native_info` / `_native_error`)
@@ -635,7 +637,7 @@ once, on first run. Per-user throughout: no admin, no UAC, no second file.
   user's data).
 - **A harness must never call `do_install`/`do_uninstall`** — they write
   to the tester's machine. `selftest`'s install section asserts on
-  `install_plan()` and `install_prompt_needed()` only (11 checks).
+  `install_plan()` and `install_needed()` only (11 checks).
 - The failure dialog keeps its message to one line ≤ ~52 characters:
   `textengine` has no newline handling, and a longer line would be
   ellipsized by the artwork — never cut a word mid-way in a dialog either.
@@ -718,7 +720,7 @@ being verified.
   goes for `do_apply_update`: it rewrites the exe on disk and spawns
   processes. Assert on the read-only surface instead: `install_plan()`
   computes every path an install would touch without touching it,
-  `install_prompt_needed()` and `update_plan()` are pure. Same for
+  `install_needed()` and `update_plan()` are pure. Same for
   `_create_shortcut` — never point it at a real folder from a test.
 - Harnesses that build a real `AutoTyper` must set
   `A.reduce_motion_enabled = lambda: True` and re-apply `root.attributes("-alpha", 0.0)`
