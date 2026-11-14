@@ -267,7 +267,7 @@ HISTORY_KEEP = 200
 # it.  Bump it together with version_info.txt whenever a release ships, and
 # give the new version its line in UPDATES below: selftest holds the two in
 # step, so a bump without the line fails the suite.
-APP_VERSION = "1.18"
+APP_VERSION = "1.19"
 
 # What every release changed, newest first - the Updates tab reads this and
 # nothing else.  One line each, plain words, short enough for the panel: the
@@ -276,6 +276,7 @@ APP_VERSION = "1.18"
 # copy simply shows fewer lines - every entry describes a version at or
 # below the one running.
 UPDATES = (
+    ("1.19", "A new Updates tab lists what every release changed."),
     ("1.18", "Notifications show on screen, and the first run installs itself."),
     ("1.17", "Raze updates itself automatically in the background."),
     ("1.16", "Raze can add itself to the Start Menu and Settings."),
