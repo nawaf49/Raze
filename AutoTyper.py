@@ -264,12 +264,30 @@ TOAST_RETRY_S = 2.0
 HISTORY_KEEP = 200
 
 # the shipped version - Settings > Apps and the file's Properties both read
-# it.  Bump it together with version_info.txt whenever a release ships.
+# it.  Bump it together with version_info.txt whenever a release ships, and
+# give the new version its line in UPDATES below: selftest holds the two in
+# step, so a bump without the line fails the suite.
 APP_VERSION = "1.18"
+
+# What every release changed, newest first - the Updates tab reads this and
+# nothing else.  One line each, plain words, short enough for the panel: the
+# tab exists so a user who was moved onto a new version in the background
+# can find out why a feature appeared.  It ships inside the exe, so an older
+# copy simply shows fewer lines - every entry describes a version at or
+# below the one running.
+UPDATES = (
+    ("1.18", "Notifications show on screen, and the first run installs itself."),
+    ("1.17", "Raze updates itself automatically in the background."),
+    ("1.16", "Raze can add itself to the Start Menu and Settings."),
+    ("1.15", "F7 continues a stopped run, and the top bar shows uptime."),
+    ("1.14", "Your Discord profile shows what Raze is doing."),
+    ("1.13", "Settings take effect while a run is going."),
+    ("1.12", "The window scales itself to any screen, up to 4K."),
+)
 
 # nav tabs: (label, key)
 TABS = (("Typer", "typer"), ("Hotkeys", "hotkeys"),
-        ("History", "history"))
+        ("History", "history"), ("Updates", "updates"))
 
 # big display headline per tab - none any more.  The hotkeys tab used to
 # carry "Set it your way." above its card; it was decoration that pushed the
@@ -2811,6 +2829,11 @@ class AutoTyper:
                 view.lower()
         if key == "history":
             self._refresh_history()
+        elif key == "updates":
+            # rows only fit once the panel has its real height, so the list
+            # is redrawn on every open - the same dance _refresh_history does
+            self._render_updates()
+            self.root.after_idle(self._render_updates)
         self._slide_tab(mid - 12, switching)
 
     def _slide_tab(self, target, switching):
@@ -2975,11 +2998,11 @@ class AutoTyper:
     def _build_content(self):
         """A container that holds the tab views.
 
-        Only the tab that opens is built here.  Hotkeys and History cost
-        about 110 ms between them, and a first click on either used to pay
-        for that out of the click itself - which is exactly what a tab
-        switch felt like when it stuttered.  They are now built ahead on a
-        timer instead, while the interface is idle: see _warm_views.
+        Only the tab that opens is built here.  The other three cost
+        about 110 ms between them, and a first click on any of them used
+        to pay for that out of the click itself - which is exactly what a
+        tab switch felt like when it stuttered.  They are now built ahead
+        on a timer instead, while the interface is idle: see _warm_views.
         """
         self.content = ctk.CTkFrame(self.root, fg_color="transparent", width=WIN_W,
                                     height=WIN_H - NAV_H)
@@ -2987,7 +3010,8 @@ class AutoTyper:
 
         self._views["typer"] = self._build_typer_view()
         self._pending_views = {"hotkeys": self._build_hotkeys_view,
-                               "history": self._build_history_view}
+                               "history": self._build_history_view,
+                               "updates": self._build_updates_view}
         self.show("typer")
         # built while the app is idle, so opening either is instant
         self.root.after(TAB_WARM_MS, self._warm_views)
@@ -3270,6 +3294,79 @@ class AutoTyper:
         # draw once more now that it has - that is what decides how many rows
         # the space can actually show
         self.root.after_idle(self._render_history)
+
+    # ----- updates view -------------------------------------------------- #
+    def _build_updates_view(self):
+        """What each release changed - the tab for a feature that appeared
+        without the user ever clicking an updater."""
+        view = ctk.CTkFrame(self.content, fg_color="transparent")
+        self._place_in(view, 0, 0, WIN_W, WIN_H - NAV_H)
+        card = Card(view, width=WIN_W - MARGIN * 2, height=726)
+        self._place_in(card, MARGIN, CARD_Y - NAV_H, WIN_W - MARGIN * 2, 726)
+
+        head = ctk.CTkFrame(card, fg_color="transparent")
+        head.pack(fill="x", padx=26, pady=(22, 10))
+        BakedLabel(head, "UPDATES", size=10, weight="Bold", color=TEXT,
+                   height=18).pack(side="left")
+        # the answer to "why is this here all of a sudden", stated in the
+        # header itself: Raze moves itself onto a new version with nothing
+        # to click, and this list is what changed when it did
+        BakedLabel(head, "Raze updates itself", size=10, weight="Regular",
+                   color=FAINT, height=18).pack(side="right")
+
+        holder = ctk.CTkFrame(card, fg_color=FIELD, corner_radius=14,
+                              border_width=1, border_color=BORDER)
+        holder.pack(fill="both", expand=True, padx=26, pady=(0, 22))
+        self.updates_list = tk.Frame(holder, bg=FIELD, bd=0,
+                                     highlightthickness=0)
+        self.updates_list.pack(side="left", fill="both", expand=True,
+                               padx=12, pady=12)
+        self._updates_rows = []
+        return view
+
+    def _render_updates(self):
+        """One row per version, newest first, as many as the panel shows.
+
+        The same rule as the history list: nothing scrolls, so only the
+        rows that fit are built.  The list is fixed (UPDATES), so unlike
+        history this only has to land right once - but the panel has no
+        real height until the tab has been laid out, which is why show()
+        calls it on every open and after_idle draws it again, exactly
+        like _refresh_history.
+        """
+        if not hasattr(self, "updates_list"):
+            return
+        try:
+            for row, _tag, _line in self._updates_rows:
+                try:
+                    row.destroy()
+                except Exception:
+                    pass
+            self._updates_rows = []
+
+            row_h, gap = 34, 12                     # pitch and spacing
+            room = self.updates_list.winfo_height()
+            if room > px(20):
+                max_rows = max(1, int(room) // px(row_h + gap))
+            else:
+                # never laid out yet - a sensible amount, redrawn once it
+                # has been (UPDATES is short enough that this is all of it)
+                max_rows = 14
+
+            for version, line in UPDATES[:max_rows]:
+                row = tk.Frame(self.updates_list, bg=FIELD)
+                row.pack(fill="x", pady=(0, px(gap)))
+                # every version is "1.xx", so the tags are naturally the
+                # same width and the lines line up without a pinned box
+                tag = BakedLabel(row, version, size=13, weight="SemiBold",
+                                 color=TEXT, height=22, anchor="w", bg=FIELD)
+                tag.pack(side="left")
+                body = BakedLabel(row, line, size=12, color=MUTED, height=22,
+                                  anchor="w", bg=FIELD)
+                body.pack(side="left", padx=(18, 0))
+                self._updates_rows.append((row, tag, body))
+        except Exception:
+            pass
 
     # ----- message pool ------------------------------------------------- #
     def _build_pool(self, parent):

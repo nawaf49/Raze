@@ -72,15 +72,15 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 128 headless checks, run via `Raze.exe --selftest` |
+| `selftest.py` | 131 headless checks, run via `Raze.exe --selftest` |
 | `pause_and_toast.py` | 57 checks: pause/resume/toast routing, a tab-in stop continued by the resume key and begun again by the start key, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
-| `layout_check.py` | 25 checks: the window fits the work area, the uptime on the status line, the four keycaps, the hotkeys card and button hover backgrounds, captures both tabs |
+| `layout_check.py` | 31 checks: the window fits the work area, the uptime on the status line, the loop counter's colour, the four keycaps, the hotkeys card and button hover backgrounds, the Updates tab's rows, captures three tabs |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `rpc.py` | Discord presence: named pipe over ctypes, its own thread |
 | `rpc_check.py` | 49 checks: the presence protocol against a fake local pipe |
 | `build_assets.py` | Regenerates `assets/` artwork from source |
 | `make_shortcut.py` | Dev-only Start Menu + Desktop shortcut (hardcoded paths, pywin32). The shipped exe installs itself — see *Install* |
-| `version_info.txt` | PyInstaller version resource (`--version-file`), so Properties > Details reads "Raze, version 1.15". Bump with `APP_VERSION` |
+| `version_info.txt` | PyInstaller version resource (`--version-file`), so Properties > Details reads "Raze, version 1.18". Bump with `APP_VERSION` and `UPDATES` |
 | `AGENTS.md` | This file — read it first |
 | `README.md` | The **source-side** readme, not the public one. See *Two repos* |
 | `app_icon.png` | The dark tile; the public README title references it by this exact name |
@@ -370,7 +370,20 @@ polish on an already-done turn, so no click is ever delayed by it.
   History paying for their ~110 ms build out of the click itself. Both are
   now built by `_warm_views`, `TAB_WARM_MS` 1.5 s after start-up while the
   interface is idle, and tucked under the open view — `show()` still only
-  builds on demand if a click beats the timer.
+  builds on demand if a click beats the timer. Updates joined them when
+  the fourth tab landed.
+- **Four tabs: Typer, Hotkeys, History, Updates.** Updates is the
+  in-app changelog — it exists because the updater moves users onto a new
+  version in the background and they never see release notes, so a feature
+  appears with no explanation. It reads the baked `UPDATES` constant and
+  nothing else: one plain line per version, newest first, `APP_VERSION`
+  heading the list (selftest fails a bump without the matching line). The
+  list ships inside the exe, so an older copy shows fewer lines and every
+  entry only ever describes a version at or below the one running. Same
+  rule as History: **nothing scrolls** — rows that fit the panel are
+  built, the rest are dropped, and the panel has no real height until the
+  tab has been laid out, so `show()` renders it on open and again on
+  `after_idle`.
 - `_tab_anim` is a token: every switch supersedes a travel in flight, so
   rapid clicking starts each trip from wherever the last one reached, and
   the view that wins is always raised *from* the offset (it is lowered
@@ -856,20 +869,27 @@ open — the single-instance check reports honestly in both states.
 
 ## Releasing
 
-- **Before building the next release: bump the version in both places.**
-  `APP_VERSION` in `AutoTyper.py` and `version_info.txt`
+- **Before building the next release: bump the version in both places, and
+  give it its changelog line.** `APP_VERSION` in `AutoTyper.py` and
+  `version_info.txt`
   (`filevers`/`prodvers` + the `FileVersion`/`ProductVersion` strings) must
   say the same number — the registry's DisplayVersion, the file's
   Properties > Details and the Settings > Apps entry all read them, and a
-  mismatch ships visible in three places at once.
+  mismatch ships visible in three places at once. The third bookkeeping
+  step is `UPDATES` in `AutoTyper.py`: prepend `("1.xx", "<one line>")`
+  for the new version, plain words, newest first. The Updates tab renders
+  it, and selftest fails a bump that skipped it (`UPDATES[0][0]` must
+  equal `APP_VERSION`).
 - **The pitch changed at v1.18 — settled with the user, do not reopen it.**
   v1.16's "First run offers a one-click install — or run it from anywhere."
   died with the install offer: the shipped line is now "Single file. First
   run installs itself — nothing to click." (approved verbatim). The public
   README's Download section explains the automatic first-run install (plus a
-  bullet in *What it does*) — drafted at release time and approved before
-  v1.18 goes out. The hotkeys table and the tab-out line under *Releasing*
-  stay as they are.
+  bullet in *What it does*) — approved and published with v1.18. The
+  hotkeys table and the tab-out line under *Releasing*
+  stay as they are. The same rule applies to whatever ships next: the
+  public README's feature list gets its bullet for a new feature only at
+  release time, drafted and approved by the user before it goes out.
 - **Source lives in the private repo. The exe never does.** It is gitignored,
   and binaries committed to git inflate every clone forever.
 - **Exactly one release exists at a time.** When the next one ships, delete the

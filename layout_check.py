@@ -1,4 +1,4 @@
-"""Measure the four-keycap layout and capture both tabs.
+"""Measure the four-keycap layout and capture the tabs.
 
 Geometry is asserted rather than eyeballed, because a keycap that quietly
 runs past its own frame is invisible in a screenshot until it is not.
@@ -175,6 +175,33 @@ def main():
         check("the fourth row made the card taller",
               card.winfo_height() >= A.px(340),
               "%s (need %s)" % (card.winfo_height(), A.px(340)))
+
+        root.after(200, open_updates)
+
+    def open_updates():
+        app.show("updates")
+        root.after(400, measure_updates)
+
+    def measure_updates():
+        check("the updates tab is on the bar",
+              "updates" in app._tab_items, str(sorted(app._tab_items)))
+        view = app._views.get("updates")
+        check("the updates view builds", view is not None,
+              "missing" if view is None else "built")
+        rows = getattr(app, "_updates_rows", [])
+        head = rows[0][1]._text if rows else None
+        check("the shipped version heads the list",
+              head == A.APP_VERSION, str(head))
+        root.update_idletasks()
+        room = app.updates_list.winfo_height() if view is not None else 0
+        bottom = max((r.winfo_y() + r.winfo_height()
+                      for r, _tag, _body in rows), default=0)
+        check("every update row sits inside the panel",
+              bool(rows) and 0 < bottom <= room,
+              "rows %s bottom %s room %s" % (len(rows), bottom, room))
+
+        hwnd = int(root.wm_frame(), 16)
+        cw.capture(hwnd, r"C:\Users\nawaf\AppData\Local\Temp\opencode\updates.png")
 
         root.after(200, done)
 

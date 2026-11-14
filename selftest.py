@@ -1106,6 +1106,27 @@ def run():
         failures += not _check("a dev run never checks for updates",
                                not up["enabled"] and not up["target"])
 
+    # The Updates tab ships its list inside the exe, so the two have to
+    # stay in step: the newest entry is the version actually running, the
+    # list runs newest first, and every line is short enough for the panel
+    # it is drawn in.  A release that bumps APP_VERSION without giving the
+    # version its line fails here.
+    def _pad(t):
+        p = tuple(t or ())
+        return p + (0,) * max(0, 3 - len(p))
+    parsed = [A.parse_version(v) for v, _line in A.UPDATES]
+    failures += not _check("the update history starts at the shipped version",
+                           bool(A.UPDATES) and A.UPDATES[0][0] == A.APP_VERSION,
+                           str(A.UPDATES[0] if A.UPDATES else None))
+    failures += not _check("the update history runs newest first",
+                           len(parsed) > 1
+                           and all(_pad(parsed[i]) > _pad(parsed[i + 1])
+                                   for i in range(len(parsed) - 1)),
+                           str([v for v, _l in A.UPDATES]))
+    longest = max((len(line) for _v, line in A.UPDATES), default=0)
+    failures += not _check("every update line fits its row",
+                           longest > 0 and longest <= 78, str(longest))
+
     print()
     if failures:
         print(f"SELFTEST FAILED - {failures} check(s) did not pass")
