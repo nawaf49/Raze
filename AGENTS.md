@@ -103,8 +103,16 @@ BORDER    #1e1e23
 BORDER_2  #2c2c33
 BLUE      #2f6bff
 GREEN     #22c55e   typing state only
-AMBER     #f59e0b   warnings, refusals, and the session loop counter
+AMBER     #f59e0b   warnings and refusals only - state words, never data
 ```
+
+Colour follows meaning: **data is white, state is colour.** Every number
+in the UI is TEXT (the four counters, the loop counter); GREEN/AMBER mark
+what the app is *doing* (typing, paused, tab out). The loop counter was
+amber until it collided with the amber state word 16 px away — two amber
+phrases side by side read as one. FAINT is for captions you do not read;
+anything read as text (the uptime clock) sits at MUTED, which clears AA
+at 10 px where FAINT does not.
 
 Layout constants: window `1060x860`, nav `68` high, content from `y=96`.
 `TICK_MS = 50` (heartbeat), `SAVE_EVERY = 60`, `HISTORY_KEEP = 200`.
@@ -762,14 +770,17 @@ being verified.
     `sys.stdout` with
     `errors="replace"`: the `∞` glyph cannot be encoded on a cp1252 console
     and one raised `print` breaks the `after()` chain, stalling the harness.
-  - `layout_check.py` — 25 checks. The window fits the work area's width and
+  - `layout_check.py` — 31 checks. The window fits the work area's width and
     height with its frame, the client area is the design at the clamped scale,
     the uptime sits on the status line between the tabs and the dot without
-    crowding either, the four keycaps read `F8`/`F6`/`F7`/`F9` and fit their
+    crowding either and is the readable grey (MUTED), the loop counter reads
+    as data (TEXT) rather than a warning, the four keycaps read
+    `F8`/`F6`/`F7`/`F9` and fit their
     frames, the hotkeys
     card still fits its tab at 348 px, every button's label sits on the fill it
-    is actually looking at (rest **and** hover), and it captures `typer.png` /
-    `hotkeys.png` for the eye to check.
+    is actually looking at (rest **and** hover), the Updates tab's rows fit
+    the panel with the shipped version heading them, and it captures
+    `typer.png` / `hotkeys.png` / `updates.png` for the eye to check.
   - `rpc_check.py` — 49 checks. The presence protocol end to end: handshake,
     all three activity shapes, the repo button, the timer that runs from app
     start through every status — paused and idle included — and never moves,

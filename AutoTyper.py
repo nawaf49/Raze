@@ -2637,11 +2637,13 @@ class AutoTyper:
         # longest string the clock can print and pinned, with the words
         # right aligned inside it, so a year of uptime grows away from the
         # status dot instead of into it - and fit=True means it would rather
-        # draw smaller than overlap the tabs.
+        # draw smaller than overlap the tabs.  MUTED, not FAINT: it is a
+        # clock people actually read, and the dim grey sits under the
+        # contrast line at 10 px.
         self.uptime_text = BakedLabel(self.root, "UPTIME 00:00", size=10,
-                                      weight="SemiBold", color=FAINT,
+                                      weight="SemiBold", color=MUTED,
                                       anchor="e", fit=True)
-        _art, up_dims = text_photo("UPTIME 999y 364d", 10, "SemiBold", FAINT,
+        _art, up_dims = text_photo("UPTIME 999y 364d", 10, "SemiBold", MUTED,
                                    0.0, False, True, None, None)
         up_worst = (up_dims[0] + 2) / S
         self.github_btn = BakedButton(self.root, "Star on GitHub", self._open_github,
@@ -3485,11 +3487,13 @@ class AutoTyper:
         self.session_state = BakedLabel(head, "Ready", size=11, color=FAINT, height=18)
         self.session_state.pack(side="right")
         # packed after the state, so it lands on its left: which loop the run
-        # is on, separated from how many times it repeats - `/` and the
-        # infinity sign in gold, the rest of the label gold with them.  The
-        # heartbeat rewrites it, and only when the words change
+        # is on, separated from how many times it repeats.  It is data, not
+        # a state, so it is white like every other number in the card -
+        # amber belongs to the word beside it, and two amber words side by
+        # side (Paused, this label) read as one phrase.  The heartbeat
+        # rewrites it, and only when the words change
         self.session_loop = BakedLabel(head, self._loop_text(), size=11,
-                                       color=AMBER, height=18)
+                                       color=TEXT, height=18)
         self.session_loop.pack(side="right", padx=(0, 16))
 
         body = ctk.CTkFrame(card, fg_color="transparent")

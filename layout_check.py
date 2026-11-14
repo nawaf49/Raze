@@ -83,6 +83,18 @@ def main():
                   "text %r box %s..%s dot %s tabs %s y %s/%s"
                   % (up._text, ux0, ux1, dot_x, tabs_right,
                      up.winfo_y(), app.status_text.winfo_y()))
+            # a clock people read: muted grey, not the dim one that sits
+            # under the contrast line at 10 px
+            check("the uptime is the readable grey, not the dim one",
+                  up._color == A.MUTED, up._color)
+
+        # colour follows meaning: the loop counter is data like every other
+        # number, so it is white - amber belongs to states (Paused, Tab out)
+        # and two amber words side by side read as one phrase
+        loop = getattr(app, "session_loop", None)
+        check("the loop counter reads as data, not a warning",
+              loop is not None and loop._color == A.TEXT,
+              loop._color if loop is not None else "missing")
 
         print("keycaps (typer)")
         for attr, expect in (("key_cap_start", "F8"),
