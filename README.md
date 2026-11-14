@@ -22,6 +22,9 @@ them for you into whatever app you are working in.
 - **Uptime** - how long Raze has been open, on the top bar. It runs from the
   moment the app starts and keeps counting through every pause and stop; it
   only goes back to zero when the app closes.
+- **Updates** - Raze moves itself onto a new version in the background, with
+  nothing to click. The Updates tab lists what every release changed, so a
+  feature that appears on its own always has a line explaining it.
 - **Discord presence** - while Raze runs, your Discord profile shows whether it
   is typing, paused or idle, the total number of messages ever sent, and a
   timer of how long Raze has been open - the same uptime clock, so pausing or
@@ -40,11 +43,11 @@ know why that one happened.
 Grab `Raze.exe` and run it. It is a single, self-contained file - no folders,
 no runtime, no dependencies.
 
-On its first run it asks once whether to install itself. **Install** copies
-Raze to `%LOCALAPPDATA%\Programs\Raze`, puts it in the Start Menu and on the
-Desktop, and registers it in Windows Settings > Apps with a working Uninstall
-button. **Not now** keeps it portable - the file runs from wherever it sits,
-and the question never comes back. Installing and uninstalling never touch
+On its first run Raze installs itself - there is nothing to click. It copies
+to `%LOCALAPPDATA%\Programs\Raze`, puts a shortcut in the Start Menu and on
+the Desktop, and registers in Windows Settings > Apps with a working Uninstall
+button. A file that is already installed never installs again, and a dev run
+never installs at all. Installing and uninstalling never touch
 `%APPDATA%\Raze`: your messages, history and settings outlive the program.
 
 ## Screen sizes
