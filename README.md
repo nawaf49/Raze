@@ -53,6 +53,8 @@ one at a time, pressing Enter after each one.
   and it stops if you click back into it.
 - The History tab shows how many messages you sent each day, plus a total
   for all time.
+- The Updates tab lists what each version of Raze changed. Raze updates
+  itself in the background, so this is where you find out what's new.
 - The top bar shows how long Raze has been open. It keeps counting through
   pauses and stops, and only starts over when you close Raze.
 - If Raze stops without you asking — the list ran out, typing failed, or you
