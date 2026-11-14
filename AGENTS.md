@@ -189,7 +189,8 @@ down together, still sharp.
 - **The scale audit.** `%TEMP%\opencode\res_audit.py <scale> [tab]` builds
   the app at a forced scale and reports glyph boxes taller than their room
   plus every mapped widget outside the client, per tab. Sweep 0.50–1.20
-  across `typer`/`hotkeys`/`history` and require `RESULT: CLEAN` on all 45
+  across `typer`/`hotkeys`/`history`/`updates` and require `RESULT: CLEAN`
+  on all 60
   lines after any layout change. (Above ~1.2 on this 1080p machine is a
   probe artifact: `RAZE_SCALE` bypasses the clamp and the screen cannot
   hold the window. `cfg_stack.py` beside it dumps the config card's
