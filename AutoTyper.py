@@ -251,6 +251,19 @@ RESTORE_QUIET_MS = 8
 RESTORE_QUIET_NEEDED = 2
 RESTORE_MAX_MS = 1500
 
+# --- small motions -------------------------------------------------------- #
+# Dress, not structure.  Each of these plays while the interface is already
+# usable, writes its exact final values on the last frame rather than
+# trusting the curve to land on them, and stands down entirely under Windows'
+# "turn off unnecessary animations" (reduce_motion_enabled).  RISE_MS is one
+# rise: a fresh dialog fading in from DIALOG_RISE design px below home, the
+# editor's breath over POOL_SETTLE_DIP when another pool takes the screen.
+# Frames run on TAB_FRAME_MS - the house cadence - and ease-out cubic, the
+# curve the tab views already rise on.
+RISE_MS = 160
+DIALOG_RISE = 8
+POOL_SETTLE_DIP = 6
+
 # --- status pulse --------------------------------------------------------- #
 # The dot and the word breathe while the typer is running.  Every brightness
 # step is baked once, so running the animation costs one image swap per frame
@@ -3161,7 +3174,7 @@ class BakedButton(ctk.CTkFrame):
     def __init__(self, master, text, command=None, size=12, weight="SemiBold",
                  color=TEXT, fill=TEXT, hover="#ffffff", border=None,
                  hover_border=None, height=36, radius=None, tracking=0.0,
-                 **kwargs):
+                 press=None, **kwargs):
         super().__init__(master, fg_color=fill, corner_radius=radius or height // 2,
                          border_width=1 if border else 0,
                          border_color=border or fill, height=height, cursor="hand2",
@@ -3184,26 +3197,62 @@ class BakedButton(ctk.CTkFrame):
         self._rest_fill = fill
         self._rest_border = border
         self._hover_border = hover_border
+        self._press_fill = press      # one brighter frame on press, or none
+        self._hovered = False
+        self._flash = 0               # token: a newer press owns the colour
         for widget in (self, self.label):
             widget.bind("<Button-1>", self._on_click)
             widget.bind("<Enter>", self._on_enter)
             widget.bind("<Leave>", self._on_leave)
 
     def _on_enter(self, _event=None):
+        self._hovered = True
         self.configure(fg_color=self._hover)
         if self._hover_border is not None:
             self.configure(border_color=self._hover_border)
         self.label.sync_bg()
 
     def _on_leave(self, _event=None):
+        self._hovered = False
         self.configure(fg_color=self._rest_fill)
         if self._rest_border is not None:
             self.configure(border_color=self._rest_border)
         self.label.sync_bg()
 
     def _on_click(self, event):
+        # the press answers before the command does: one frame brighter,
+        # then home.  The revert carries a token so a second press
+        # supersedes the first one's timer instead of fighting it, and a
+        # command that destroys the button (a dialog's OK) only costs a
+        # swallowed TclError on the way out.
+        if self._command and self._press_fill is not None \
+                and not reduce_motion_enabled():
+            self._flash += 1
+            token = self._flash
+            try:
+                self.configure(fg_color=self._press_fill)
+                self.label.sync_bg()
+                self.after(90, lambda: self._unflash(token))
+            except Exception:
+                pass
         if self._command:
             self._command()
+
+    def _unflash(self, token):
+        if token != self._flash:
+            return                      # a newer press owns the colour now
+        try:
+            if self._hovered:
+                self.configure(fg_color=self._hover)
+                if self._hover_border is not None:
+                    self.configure(border_color=self._hover_border)
+            else:
+                self.configure(fg_color=self._rest_fill)
+                if self._rest_border is not None:
+                    self.configure(border_color=self._rest_border)
+            self.label.sync_bg()
+        except Exception:
+            pass                        # the button is gone with its dialog
 
 
 class Pill(BakedButton):
@@ -3219,16 +3268,19 @@ class Pill(BakedButton):
         if kind == "solid":
             fill, hover, text_color = TEXT, "#ffffff", INK
             border, hover_border = None, None
+            press = "#dcdce1"       # a white pill can only press dimmer
         elif kind == "danger":
             fill, text_color, border = "#1a0f11", "#ff7a7a", "#4a1f24"
             hover, hover_border = "#2a1216", "#3a181c"
+            press = "#3a181c"       # one step redder than the hover
         else:
             fill, text_color, border = SURFACE_2, TEXT, BORDER_2
             hover, hover_border = "#1d1d22", "#28282f"
+            press = BORDER_2        # one step brighter than the hover
         super().__init__(master, text, command, size=size, weight="SemiBold",
                          color=text_color, fill=fill, hover=hover,
                          border=border, hover_border=hover_border,
-                         height=height, **kwargs)
+                         press=press, height=height, **kwargs)
         if width:
             self.configure(width=width)
 
@@ -3828,7 +3880,8 @@ class AutoTyper:
         up_worst = (up_dims[0] + 2) / S
         self.github_btn = BakedButton(self.root, "Star on GitHub", self._open_github,
                                       size=10, weight="SemiBold", fill=TEXT,
-                                      hover="#ffffff", color=INK, height=32)
+                                      hover="#ffffff", color=INK, height=32,
+                                      press="#dcdce1")
         self.root.update_idletasks()
         # same unit rule as the tabs: these widgets report device px, the
         # arithmetic below is design px
@@ -4704,6 +4757,8 @@ class AutoTyper:
 
         pool = ctk.CTkFrame(card, fg_color="transparent")
         pool.pack(fill="both", expand=True, padx=24)
+        # kept on self for the settle that breathes after a pool switch
+        self.pool = pool
 
         # a numbered rail on the left - one number per message
         # CTk constructor width is design px (scaled once by CTk itself)
@@ -4754,9 +4809,15 @@ class AutoTyper:
             prow, values=["Default"], command=self._switch_profile,
             width=170, height=30, corner_radius=8, anchor="w",
             dynamic_resizing=False,
-            fg_color=SURFACE_2, button_color=BORDER_2,
-            button_hover_color="#3d3d46", text_color=TEXT,
-            dropdown_fg_color=SURFACE_2, dropdown_hover_color="#1d1d22",
+            # the fields around it are SURFACE_2 with a BORDER_2 stroke, and
+            # this widget has no stroke to borrow - so the arrow side becomes
+            # a recessed SURFACE well rather than the light block CTk ships
+            # with, and lights to BORDER_2 on hover.  The popup keeps the
+            # body colour to lift off the card, with the house hover shade:
+            # the old #1d1d22 on #141418 was a highlight nobody could see
+            fg_color=SURFACE_2, button_color=SURFACE,
+            button_hover_color=BORDER_2, text_color=TEXT,
+            dropdown_fg_color=SURFACE_2, dropdown_hover_color="#3d3d46",
             dropdown_text_color=TEXT, font=(FONT_SB, -11))
         self.profile_menu.pack(side="left")
         Pill(prow, "New", self._new_profile, kind="glass", height=30,
@@ -5470,6 +5531,49 @@ class AutoTyper:
         self.editor.insert("1.0", "\n".join(msgs))
         self._update_pool_meta()
 
+    def _dialog_in(self, dialog, x, y):
+        """Fade and rise a fresh dialog the last few pixels into place.
+
+        The dialog is already built and mapped when this runs - it is
+        there; the motion only dresses the arrival.  The caller drops
+        alpha to 0 before the map, so nothing half-drawn reaches the
+        screen, and the last frame writes the exact final values rather
+        than trusting the curve to land on them.  Reduce motion puts it
+        straight at home; a dialog that dies mid-flight takes its timer
+        with it and the except clause stands it up anyway - an invisible
+        dialog would be a dialog nobody can answer.
+        """
+        try:
+            rise = px(DIALOG_RISE)
+            steps = max(1, RISE_MS // TAB_FRAME_MS)
+
+            def frame(i=0):
+                try:
+                    if reduce_motion_enabled() or i >= steps:
+                        dialog.attributes("-alpha", 1.0)
+                        dialog.geometry(f"+{x}+{y}")
+                        return
+                    t = i / steps
+                    e = 1 - (1 - t) ** 3      # ease-out cubic, the house curve
+                    dialog.attributes("-alpha", e)
+                    dialog.geometry(
+                        f"+{x}+{y + int(round(rise * (1 - e)))}")
+                    dialog.after(TAB_FRAME_MS, lambda: frame(i + 1))
+                except Exception:
+                    try:
+                        dialog.attributes("-alpha", 1.0)
+                        dialog.geometry(f"+{x}+{y}")
+                    except Exception:
+                        pass                 # the dialog is gone
+
+            frame(0)
+        except Exception:
+            try:
+                dialog.attributes("-alpha", 1.0)
+                dialog.geometry(f"+{x}+{y}")
+            except Exception:
+                pass
+
     def _confirm(self, title, message, confirm_text="Confirm", cancel_text="Cancel",
                  kind="solid", wait=True):
         """A confirmation dialog in the app's own style. Returns True on yes.
@@ -5537,6 +5641,10 @@ class AutoTyper:
             x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
             y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
             dialog.geometry(f"452x178+{x}+{y}")
+            try:
+                dialog.attributes("-alpha", 0.0)   # dark until the rise
+            except Exception:
+                pass
             dialog.bind("<Escape>", lambda e: close(False))
             dialog.bind("<Return>", lambda e: close(True))
             dialog.transient(self.root)
@@ -5546,6 +5654,7 @@ class AutoTyper:
                 self._set_window_icon(dialog)
             except Exception:
                 pass
+            self._dialog_in(dialog, x, y)
             if wait:
                 try:
                     dialog.grab_set()
@@ -5661,6 +5770,10 @@ class AutoTyper:
             x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
             y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
             dialog.geometry(f"452x248+{x}+{y}")
+            try:
+                dialog.attributes("-alpha", 0.0)   # dark until the rise
+            except Exception:
+                pass
             dialog.bind("<Escape>", lambda e: close(None))
             field.bind("<Return>", accept)
             dialog.transient(self.root)
@@ -5670,6 +5783,7 @@ class AutoTyper:
                 self._set_window_icon(dialog)
             except Exception:
                 pass
+            self._dialog_in(dialog, x, y)
             try:
                 field.focus_set()
                 field.select_range(0, "end")
@@ -5833,6 +5947,46 @@ class AutoTyper:
             self._update_pool_meta()
 
     # ----- profiles ------------------------------------------------------ #
+    def _pool_settle(self):
+        """Let the editor breathe once when another pool takes the screen.
+
+        The frame dips POOL_SETTLE_DIP and rises home - the same
+        direction the tab views rise from - so a switch lands instead of
+        just appearing.  Motion only: the dip is written in device px,
+        because pack() is scaled by CTk but pack_configure() is not, and
+        the last frame writes pady (0, 0) - the exact value the layout
+        settled at - so nothing can be left offset.  Reduce motion never
+        moves it at all, checked per frame so a setting flipped
+        mid-flight still lands home, and a token lets a rapid second
+        switch supersede a settle still in flight.
+        """
+        if reduce_motion_enabled():
+            return
+        try:
+            self._settle_token = getattr(self, "_settle_token", 0) + 1
+            token = self._settle_token
+            dip = px(POOL_SETTLE_DIP)
+            steps = max(1, RISE_MS // TAB_FRAME_MS)
+
+            def frame(i=0):
+                if token != self._settle_token:
+                    return                 # a newer switch owns the settle
+                try:
+                    if reduce_motion_enabled() or i >= steps:
+                        self.pool.pack_configure(pady=(0, 0))
+                        return
+                    t = i / steps
+                    e = 1 - (1 - t) ** 3     # ease-out cubic, the house curve
+                    self.pool.pack_configure(
+                        pady=(int(round(dip * (1 - e))), 0))
+                    self.pool.after(TAB_FRAME_MS, lambda: frame(i + 1))
+                except Exception:
+                    pass                    # the window is gone
+
+            frame(0)
+        except Exception:
+            pass
+
     def _switch_profile(self, name):
         """Open another pool: what is on screen is stored under its name
         first, so nothing is lost between one pool and the next."""
@@ -5850,6 +6004,7 @@ class AutoTyper:
             self.profile_menu.set(name)
         except Exception:
             pass
+        self._pool_settle()
 
     def _new_profile(self):
         """A fresh, empty pool, named in the prompt before it is made.
@@ -5882,6 +6037,7 @@ class AutoTyper:
             self.profile_menu.set(name)
         except Exception:
             pass
+        self._pool_settle()
 
     def _rename_profile(self):
         """Give the open pool another name, keeping its place in the list.
@@ -5938,6 +6094,7 @@ class AutoTyper:
             self.profile_menu.set(self.active_profile)
         except Exception:
             pass
+        self._pool_settle()
 
     # ------------------------------------------------------------------ #
     #  Hotkey
