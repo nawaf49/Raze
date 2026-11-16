@@ -256,6 +256,11 @@ PULSE_STEPS = 10             # brightness levels between dim and full
 TICK_MS = 50
 # how often the log is written to disk (it only runs when something changed)
 SAVE_EVERY = 60.0
+# how long a pool or settings edit may sit in memory before it is written.
+# The history gate above is a minute because a run produces it in a steady
+# drip; an edit is the user's own work, and a crash must not take more than
+# a couple of seconds of it
+CONFIG_SAVE_EVERY = 2.0
 # how often a wait already in flight re-reads the message interval, so an
 # interval changed mid-run lands within this long instead of at the next
 # session - the countdown reads the same deadline, so it stays true
@@ -350,7 +355,11 @@ def read_config(path=None):
         "msg_interval": 2, "loop": 0, "random": False,
         "start_key": "f8", "stop_key": "f9", "pause_key": "f6",
         "resume_key": "f7",
-        "messages": [],
+        # messages deliberately has no default here, the way history and
+        # daily do not: absent means "the user has never had a pool" (the
+        # sample messages apply) while a stored [] means a pool the user
+        # emptied, which must come back empty.  Filling the key in would
+        # make those two indistinguishable and resurrect the samples.
         # The two personal bests the History tab shows.  They default to
         # 0 rather than being absent so a fresh config always has them,
         # but a config that carries them keeps them: nothing here ever
@@ -423,6 +432,11 @@ def record_plan(cfg, sent, secs):
                                      _as_count(sent)),
             "best_sitting_s": max(_as_count(cfg.get("best_sitting_s")),
                                   _as_count(secs))}
+
+
+# what a first-ever run finds in the pool - handed out to a config that
+# has never carried one, by the load path in _apply_config
+SAMPLE_MESSAGES = ["Hello there!", "How can I help you?", "Have a great day!"]
 
 
 def pretty_day(day):
@@ -3141,6 +3155,11 @@ class AutoTyper:
         # by _set_status and read by the heartbeat
         self._rpc_status = "IDLE"
         self._history_dirty = False
+        # a pool or settings edit waiting to be written - the heartbeat
+        # flushes it, see CONFIG_SAVE_EVERY.  Loading the config in
+        # _apply_config marks it too (every setter runs through it), so
+        # the load path clears it again on the way out
+        self._config_dirty = False
         self._last_save = 0.0
         # a notification Windows would not show yet, and the last time the
         # heartbeat asked whether it may go out now
@@ -4680,9 +4699,11 @@ class AutoTyper:
 
     def _set_msg_interval(self, v):
         self.msg_interval = float(v)
+        self._config_dirty = True
 
     def _set_loop(self, v):
         self.loop_count = int(round(float(v)))
+        self._config_dirty = True
 
     def _set_countdown(self, v):
         self.countdown = 0.0
@@ -4748,8 +4769,16 @@ class AutoTyper:
             for stamp, _message in self.history:
                 day = stamp[:10]
                 self.daily[day] = self.daily.get(day, 0) + 1
-        msgs = c.get("messages") or ["Hello there!", "How can I help you?", "Have a great day!"]
-        self.editor.insert("1.0", "\n".join(msgs))
+        # absent means the user has never had a pool (the samples apply);
+        # a stored [] means a pool the user emptied, which comes back
+        # empty.  Filling the key in would make those one answer, which
+        # is what used to resurrect the samples after a Clear
+        msgs = c.get("messages")
+        if msgs is None:
+            msgs = SAMPLE_MESSAGES
+        elif not isinstance(msgs, list):
+            msgs = []
+        self.editor.insert("1.0", "\n".join(str(m) for m in msgs))
         self._update_pool_meta()
         self.install_asked = bool(c.get("install_asked"))
         # The badge on the Updates tab: has the running version's list been
@@ -4769,6 +4798,12 @@ class AutoTyper:
         # who has not set one yet
         self.best_sitting_msgs = _as_count(c.get("best_sitting_msgs"))
         self.best_sitting_s = _as_count(c.get("best_sitting_s"))
+
+        # Loading is not editing: every setter above ran through the dirty
+        # flag, and the insert's own <<Modified>> may be queued behind this
+        # - so the flag is dropped here, and anything that marks it after
+        # this point is the user's first real edit
+        self._config_dirty = False
 
     def _commit_fields(self):
         """Read what is on screen, not what was there before the user typed.
@@ -4808,6 +4843,26 @@ class AutoTyper:
             write_config(self.cfg)
         except Exception:
             pass
+
+    def _maybe_save(self, now):
+        """Write the config when something changed and its gate allows.
+
+        One write serves both flags: the history a run produces (a
+        minute's worth) and a pool or settings edit (a couple of
+        seconds' worth), and `_last_save` throttles them together -
+        whichever gate is due clears both, because the file carries
+        everything at once.  The clearing happens *after* the write:
+        `_save_config` flushes the number fields through their setters,
+        and those mark the config dirty again - clearing first would
+        leave the flag set by the very write that saved it, and the
+        heartbeat would then rewrite the file every two seconds forever.
+        """
+        if ((self._config_dirty and now - self._last_save > CONFIG_SAVE_EVERY)
+                or (self._history_dirty and now - self._last_save > SAVE_EVERY)):
+            self._last_save = now
+            self._save_config()
+            self._config_dirty = False
+            self._history_dirty = False
 
     # ------------------------------------------------------------------ #
     #  Message pool
@@ -4900,6 +4955,10 @@ class AutoTyper:
         # the next message on.  The list is only ever replaced, never edited
         # in place, which is what makes reading it from that thread safe
         self.messages = msgs
+        # every pool edit lands here - the typing binding, import, shuffle,
+        # clear, a profile switch - so this is the one place that has to
+        # mark the config dirty for the heartbeat to write
+        self._config_dirty = True
         chars = sum(len(m) for m in msgs)
         self.pool_meta.set_text(f"{len(msgs)} messages  ·  {chars} characters")
         self._update_pool_gutter()
@@ -5887,12 +5946,9 @@ class AutoTyper:
 
         # keep the history on disk (it survives restarts until app data is
         # deleted).  Writing the file is not free, so it only happens when
-        # something actually changed and not more than once a minute.
-        now = time.time()
-        if self._history_dirty and now - self._last_save > SAVE_EVERY:
-            self._history_dirty = False
-            self._last_save = now
-            self._save_config()
+        # something actually changed and not more than once a minute - a
+        # pool or settings edit only waits CONFIG_SAVE_EVERY instead
+        self._maybe_save(time.time())
 
     def _fit_last_label(self, event=None):
         """Clip the last message into the panel so the row cannot grow."""
@@ -5919,6 +5975,7 @@ class AutoTyper:
             self._update_stop.set()
             self.typing = False
             self._history_dirty = False
+            self._config_dirty = False
             self._save_config()
         except Exception:
             pass

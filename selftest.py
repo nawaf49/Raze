@@ -581,6 +581,7 @@ def run():
             self._next_deadline = None
             self._last_message = ""
             self._history_dirty = False
+            self._config_dirty = False
             self._last_save = 0.0
             self._pulse_on = False
             # the held notification and the loop the session card reads;
@@ -631,6 +632,13 @@ def run():
 
         def _save_config(self):
             pass
+
+        def _maybe_save(self, now):
+            # the real gate, driven on the stub: nothing here is dirty
+            # (and _save_config above is a no-op), so a heartbeat tick in
+            # these tests never writes - but the wiring the tick relies
+            # on is exercised all the same
+            A.AutoTyper._maybe_save(self, now)
 
         def _pulse_start(self):
             self._pulse_on = True
@@ -912,6 +920,67 @@ def run():
             "the plan returns nothing but its own two keys",
             sorted(only) == ["best_sitting_msgs", "best_sitting_s"],
             str(sorted(only)))
+
+        # the pool's own key: absent means the user has never had one,
+        # which is what lets a stored [] come back emptied - read_config
+        # no longer fills the key in
+        failures += not _check(
+            "a fresh config carries no messages key",
+            "messages" not in fresh, str(fresh.get("messages")))
+
+        # the heartbeat's write gate: an edit is on disk within a couple
+        # of seconds, history within a minute - and the write itself
+        # re-marks the dirty flag (it flushes the number fields through
+        # their setters), which must not condemn the file to a rewrite
+        # every two seconds forever
+        class _Saver(object):
+            def __init__(self):
+                self._config_dirty = False
+                self._history_dirty = False
+                self._last_save = 0.0
+                self.writes = 0
+
+            def _save_config(self):
+                self.writes += 1
+                self._config_dirty = True      # what _commit_fields does
+
+        s = _Saver()
+        A.AutoTyper._maybe_save(s, 100.0)      # nothing changed yet
+        failures += not _check(
+            "an untouched config is not written",
+            s.writes == 0, str(s.writes))
+        s._config_dirty = True
+        A.AutoTyper._maybe_save(s, 100.0)
+        failures += not _check(
+            "a pending edit is written at once",
+            s.writes == 1 and s._last_save == 100.0,
+            str((s.writes, s._last_save)))
+        failures += not _check(
+            "the write clears the flag it re-marked",
+            s._config_dirty is False and s._history_dirty is False,
+            str((s._config_dirty, s._history_dirty)))
+        s._config_dirty = True
+        A.AutoTyper._maybe_save(s, 101.0)      # 1 s after the last write
+        failures += not _check(
+            "the throttle holds a second edit back",
+            s.writes == 1 and s._config_dirty is True,
+            str((s.writes, s._config_dirty)))
+        A.AutoTyper._maybe_save(s, 103.5)      # 3.5 s after the last write
+        failures += not _check(
+            "the edit goes out once the throttle opens",
+            s.writes == 2 and s._config_dirty is False,
+            str((s.writes, s._config_dirty)))
+        s._history_dirty = True
+        A.AutoTyper._maybe_save(s, 150.0)      # 46.5 s after the last write
+        failures += not _check(
+            "history still waits its full minute",
+            s.writes == 2 and s._history_dirty is True,
+            str((s.writes, s._history_dirty)))
+        A.AutoTyper._maybe_save(s, 164.0)      # 60.5 s after the last write
+        failures += not _check(
+            "history goes out once its minute is up",
+            s.writes == 3 and s._history_dirty is False,
+            str((s.writes, s._history_dirty)))
 
     print("single instance")
     # False here is unambiguous: it comes back only on ERROR_ALREADY_EXISTS,
