@@ -72,9 +72,9 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 182 headless checks, run via `Raze.exe --selftest` |
+| `selftest.py` | 208 headless checks, run via `Raze.exe --selftest` |
 | `pause_and_toast.py` | 57 checks: pause/resume/toast routing, a tab-in stop continued by the resume key and begun again by the start key, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
-| `layout_check.py` | 39 checks: the window fits the work area, the uptime on the status line, the loop counter's colour, the four keycaps, the hotkeys card and button hover backgrounds, the History tab's two record tiles (a forced record reaching its tile), the Updates tab's rows and its update-done badge (every row body on one x), captures the badge state plus typer/hotkeys/history/updates |
+| `layout_check.py` | 40 checks: the window fits the work area, the uptime on the status line, the loop counter's colour, the four keycaps, the hotkeys card and button hover backgrounds, the History tab's two record tiles (a forced record reaching its tile), the Updates tab's rows and its update-done badge (every row body on one x), captures the badge state plus typer/hotkeys/history/updates |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `rpc.py` | Discord presence: named pipe over ctypes, its own thread |
 | `rpc_check.py` | 49 checks: the presence protocol against a fake local pipe |
@@ -422,6 +422,77 @@ polish on an already-done turn, so no click is ever delayed by it.
   `%TEMP%\opencode\tab_slide_check.py`, which stands the intro down
   instead (alpha stays 0) and leaves motion on.
 
+## Dialogs
+
+**No `messagebox` ever runs in the app.** Every confirmation, refusal and
+error goes through `self._confirm(...)` — a `CTkToplevel` in the app's own
+style (baked artwork, the palette, Enter/Escape) — and all seventeen former
+`messagebox.*` call sites now use it; grep finds zero left. The one rule
+that replaces them: `cancel_text=None` drops the cancel pill entirely
+(Escape still says no) for the questions that are an offer, not a choice
+with two equal sides. Exception text reaches a dialog through
+`dialog_line(exc, fallback)` — one line, ≤ ~52 characters, because
+`textengine` has no newline handling and a longer line would be
+ellipsized; a hotkey refusal says only "Use a single key such as f8."
+(`_confirm(..., wait=False)` returns with `state["dialog"]` for the rare
+caller that needs the handle; nothing in the suites reaches `_confirm` or
+`_prompt` — a probe that opened one would grab focus and surface a
+window, so motion is verified against a withdrawn toplevel instead, see
+*Small motions*).
+
+`_prompt` is the text-entry sibling: same shell, one field, live
+validation from a pure `check(text)` that answers
+`{"ok": True, "name": ...}` or `{"ok": False, "error": ...}` — used by
+`New pool` and `Rename` (see *Config*).
+
+### Small motions
+
+Three dress motions, one contract each, all in the `RISE_MS` block beside
+the restore constants: `RISE_MS = 160`, `DIALOG_RISE = 8`,
+`POOL_SETTLE_DIP = 6`. Frames run on `TAB_FRAME_MS` (16, the house
+cadence) with ease-out cubic — the curve the tab views already rise on —
+and every one of them follows the same three rules:
+
+- **The last frame writes the exact final values** (alpha `1.0`,
+  `geometry +x+y`, `pady (0, 0)`), never trusting the curve to land on
+  them, so nothing can be left offset or half-faded.
+- **Reduce motion is checked per frame**, not once at the start, so a
+  setting flipped mid-flight still lands home; with the guard on from the
+  start there is exactly one write, already final.
+- **A token supersedes**: `_settle_token` lets a rapid second pool switch
+  take over a settle still in flight instead of fighting it. The pill's
+  flash carries the same idea in `BakedButton._flash`.
+
+Where each lives:
+
+- **`_dialog_in(dialog, x, y)`** — shared by `_confirm` and `_prompt`.
+  The caller drops alpha to 0 *before* the map (nothing half-drawn
+  reaches the screen) and calls `_dialog_in` after the icon block; it
+  fades and rises the dialog in over `DIALOG_RISE` device px. An
+  exception mid-flight takes the timer with it and the except clause
+  stands the dialog up anyway — an invisible dialog would be one nobody
+  can answer.
+- **Pill press flash** — `BakedButton(press=...)`: one frame brighter on
+  press, restored after 90 ms *per hover state* (hovered goes back to the
+  hover fill, unhovered to rest). Per-kind press colours live in `Pill`:
+  solid `#dcdce1`, danger `#3a181c` (one step redder than its hover),
+  glass `BORDER_2`; the nav's white github button presses `#dcdce1`. A
+  command that destroys the button only costs a swallowed TclError.
+  **`CTkButton` steppers need no flash** — CTk's built-in
+  `_on_release` already does a rest-colour beat and `_draw` re-asserts
+  hover, so a `configure`-based flash would be overridden immediately.
+- **`_pool_settle()`** — the editor's breath when another pool takes the
+  screen: the pool frame dips `POOL_SETTLE_DIP` and rises home. The dip
+  is written in **device px** (`pack_configure` is raw — CTk scales
+  `pack()` but not `pack_configure()`). Called at the end of
+  `_switch_profile`, `_new_profile` and `_delete_profile`; **not** on
+  rename — the pool on screen never changes there.
+
+Verified by `%TEMP%\opencode\polish_check.py` (19 checks: a withdrawn
+toplevel with an alpha-pinning wrapper for `_dialog_in`, both reduce-motion
+branches, the pill flash including token supersession, and the settle's
+dip-and-home read through `pack_info`), alongside the committed suites.
+
 ## Restore
 
 Bringing the window back after a minimise (F8's `_launch`, the minimise
@@ -438,13 +509,28 @@ stalls spread over the first half second.
   focus.
 - **The fix is a drain, not a redesign.** `_on_map` (bound in `__init__`)
   drops the window to alpha 0, then `_restore_poll` calls `root.update()`
-  every `RESTORE_POLL_MS` (50 ms) and asks Tk for everything it still owes.
+  every `RESTORE_POLL_MS` (16 ms — frame cadence) and asks Tk for
+  everything it still owes.
   Two polls back under `RESTORE_QUIET_MS` (8 ms) mean the paint has actually
   stopped, and only then is alpha put back to 1.0. The repaint happens while
   nobody can see it, so the window appears complete instead of in pieces.
   `RESTORE_MAX_MS` (1500 ms) caps the invisible period whatever a
   pathological restore does. Result: **0 ms of stall after the reveal** on
   every run, against 150–490 ms before.
+- **The invisible wait is paint plus schedule, and only the paint is
+  irreducible.** Probed end to end (`restore_probe.py`: real
+  withdraw→deiconify, physical alpha pinned, save stubbed) the drain
+  measured 295/343/417 ms at the old 50 ms poll against 296/307/398 ms at
+  16 — then 220/271/347 ms final for 0.5 s / 2 s / 60 s absences. The
+  paint itself (121–321 ms) grows the longer the window was away and is
+  the price of complete-on-reveal; what 16 ms buys is the scheduling tail
+  — the wait before the first poll plus two quiet ones, ~150 ms at 50
+  against ~48 at 16. Heartbeat ticks were innocent the whole way (mean
+  0.2 ms), so the old "resonance" theory was wrong: the interval
+  arithmetic was the whole story. `RESTORE_MAX_MS` stays 1500 — never
+  approached in 15 drains (worst real: 1235 ms, a one-time warm-views
+  build inside the first poll), and lowering it only risks revealing
+  mid-paint.
 - **The guards matter more than the drain.** `<Map>` on the root fires for
   every descendant too (the tag is inherited), so `_on_map` returns unless
   `event.widget is self.root`. It also returns unless `_restore_drain` is set
@@ -621,7 +707,22 @@ payload that is unpacked from scratch on every launch.
 `%APPDATA%\Raze\config.json`. Keys: `msg_interval`, `loop`, `random`,
 `start_key`, `stop_key`, `pause_key`, `resume_key`, `messages`, `profiles`,
 `active_profile`, `history`, `daily`, `install_asked`, `seen_version`,
-`best_sitting_msgs`, `best_sitting_s`.
+`best_sitting_msgs`, `best_sitting_s`, `best_sitting_msgs_day`,
+`best_sitting_s_day`, `stats_sig`.
+
+- **`stats_sig` guards the history and the two personal bests against hand
+  edits.** `_save_config` writes `stats_sign()` — an HMAC-SHA256 over the
+  six `STATS_KEYS` (`history`, `daily`, the two bests and their two day
+  stamps) — and `read_config` verifies it *before* `harden` shapes the
+  values: a signature that does not recompute resets all six fields
+  together and drops the stale signature, so the file comes back as one
+  this build would have written; the rest of the config is untouched.
+  The key is derived from a machine-local seed, so this stops casual
+  `%APPDATA%` spoofing, not a determined attacker who can read the code —
+  honest about that limit. A config with no signature (every file from
+  before this landed) is adopted as-is and signed on the next save: there
+  is no way to tell "never signed" from "tampered", so absence must not
+  punish an old file.
 
 - `install_asked` is vestigial (see *Install*): the install question is
   gone, but the key stays readable and written on save — a config that
@@ -663,14 +764,25 @@ payload that is unpacked from scratch on every launch.
   a hand-edit that drops the newer keys.
 - **The pool card carries the switcher** — a row between the editor and the
   file pills: a `CTkOptionMenu` (palette-styled, `dynamic_resizing=False`
-  so the row can never move) listing every pool, plus `New` (first free
-  `Profile N`, starts empty) and `Delete` (confirm dialog; refuses to drop
-  the last pool, because the typing thread needs one to read). All three
-  paths — switch, new, delete — end in `_update_pool_meta`, which is the
-  single place a pool edit marks the config dirty. `_switch_profile` stores
-  the outgoing pool before loading the incoming one, so nothing is lost
-  between pools, and a switch mid-run takes effect from the next message
-  like any other pool edit.
+  so the row can never move) listing every pool, plus `New`, `Rename` and
+  `Delete`. The menu's colours are set explicitly: the arrow side is a
+  recessed `SURFACE` well lighting to `BORDER_2` on hover (CTk ships a
+  light block there that read as a glued-on rectangle — the widget has no
+  border param to borrow, so the well *is* the affordance), and the popup
+  hovers `#3d3d46` rather than the old `#1d1d22`, which was invisible on
+  `#141418`; the chevron is drawn in `text_color`. `New` opens the
+  `_prompt` dialog with the first free `Profile N` as the offer — typing
+  nothing keeps it, Escape makes no pool — and `Rename` re-prompts on the
+  active pool with its current name selected. Both validate through the
+  pure `profile_name_plan(profiles, current, raw)` (trimmed, ≤ 20
+  chars, unique — errors are one short line the dialog shows in place),
+  and `next_profile_name(profiles)` is the free-name rule on its own.
+  `Delete` refuses to drop the last pool, because the typing thread needs
+  one to read. All three paths — switch, new, delete — end in
+  `_update_pool_meta`, which is the single place a pool edit marks the
+  config dirty. `_switch_profile` stores the outgoing pool before loading
+  the incoming one, so nothing is lost between pools, and a switch
+  mid-run takes effect from the next message like any other pool edit.
 - **Edits reach the disk without waiting for a close.** `_update_pool_meta`,
   `_set_msg_interval` and `_set_loop` set `_config_dirty`;
   `_maybe_save(now)` — called from the heartbeat — writes when either that
@@ -689,18 +801,31 @@ payload that is unpacked from scratch on every launch.
   `_apply_config` reads them through `_as_count` (a hand-edited string,
   null or negative clamps to 0 and never reaches the UI or a `max()`),
   and `_save_config` writes them back. The fold is the pure
-  `record_plan(cfg, sent, secs)` beside `group_history`: it reads `cfg`
-  and never writes it, returns **only its own two keys** so a record can
-  never be the reason something else drops out of the file, and a record
-  only ever moves up. Capture is `_record_session()`, called from
+  `record_plan(cfg, candidates)` beside `group_history`: it reads `cfg`
+  and never writes it, returns **only its own four keys** (the two bests
+  plus their `..._day` stamps) so a record can never be the reason
+  something else drops out of the file, and a record only ever moves up;
+  the day stamp moves with it, blank when the value is 0.
+  **Records read the saved history, not just the live session:**
+  `_apply_config` runs `_backfill_records()`, which replays `history`
+  through the same `record_plan`, so bests recorded by an older build —
+  or written straight into the file — reach the tiles on the next launch.
+  Capture is `_record_session()`, called from
   `_stop()` — the single point a session is over, since `_start` only
   ever runs while `not typing` — and from `_on_close()` for one still
-  running; it is try/except-guarded (it sits inside the stop path, so
+  running; it folds the day's keys in from `daily` and is
+  try/except-guarded (it sits inside the stop path, so
   nothing in it may take the status line down with it) and calls
   `_save_config()` + `_refresh_records()` only when a record actually
   changed. `_refresh_records()` guards every tile with `getattr` because
   the History tab builds lazily — it is often called before the tiles
   exist as often as after, and the build calls it itself to seed them.
+  The captions read **MOST IN ONE RUN** and **LONGEST UPTIME** — the
+  user's wording for "most messages sent in one run" and total uptime —
+  and each tile carries its record's date beneath the value
+  (`record_day_text`, which formats for a tile, unlike `pretty_day`
+  which is for day rows; both read the `..._day` keys through
+  `getattr`).
 - **The records strip is a pinned 76 px row between the HISTORY header
   and the day list** — two `StatTile`s, so the two cards read as one
   design. The card is a fixed 726 and the day-list holder expands into
@@ -995,7 +1120,7 @@ being verified.
     `sys.stdout` with
     `errors="replace"`: the `∞` glyph cannot be encoded on a cp1252 console
     and one raised `print` breaks the `after()` chain, stalling the harness.
-  - `layout_check.py` — 39 checks. The window fits the work area's width and
+  - `layout_check.py` — 40 checks. The window fits the work area's width and
     height with its frame, the client area is the design at the clamped scale,
     the uptime sits on the status line between the tabs and the dot without
     crowding either and is the readable grey (MUTED), the loop counter reads
