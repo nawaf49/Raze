@@ -27,7 +27,7 @@ from pathlib import Path
 
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import filedialog, messagebox, END
+from tkinter import filedialog, END
 from tkinter import font as tkfont
 
 from PIL import Image
@@ -723,6 +723,24 @@ def profile_name_plan(profiles, current, raw):
     if name in taken and name != current:
         return {"ok": False, "error": "That name is already taken."}
     return {"ok": True, "name": name}
+
+
+def dialog_line(exc, fallback):
+    """An exception as one line a baked dialog can show.  Pure.
+
+    Baked text has no newline handling and a line past ~52 characters
+    gets ellipsized by the artwork, so a message from the wild has to
+    arrive already short: whitespace collapsed (many exceptions carry
+    their own line breaks), cut on a word boundary when it still runs
+    long, and the caller's fallback when nothing readable is left.
+    """
+    text = " ".join(str(exc or "").split())
+    if len(text) > 52:
+        head = text[:52]
+        if " " in head:
+            head = head.rsplit(" ", 1)[0]
+        text = head[:49].rstrip() + "..."
+    return text or fallback
 
 
 def pretty_day(day):
@@ -5415,12 +5433,15 @@ class AutoTyper:
                 self.editor.insert("1.0", content)
             self._update_pool_meta()
         except Exception as e:
-            messagebox.showerror("Import failed", str(e), parent=self.root)
+            self._confirm("Import failed",
+                          dialog_line(e, "Could not read that file."),
+                          confirm_text="OK", cancel_text=None)
 
     def _export_txt(self):
         msgs = self._collect_messages()
         if not msgs:
-            messagebox.showinfo("Nothing to export", "The message pool is empty.", parent=self.root)
+            self._confirm("Nothing to export", "The message pool is empty.",
+                          confirm_text="OK", cancel_text=None)
             return
         path = filedialog.asksaveasfilename(
             title="Export messages", defaultextension=".txt", initialfile="messages.txt",
@@ -5431,7 +5452,9 @@ class AutoTyper:
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n".join(msgs))
         except Exception as e:
-            messagebox.showerror("Export failed", str(e), parent=self.root)
+            self._confirm("Export failed",
+                          dialog_line(e, "Could not write that file."),
+                          confirm_text="OK", cancel_text=None)
 
     def _shuffle(self):
         msgs = self._collect_messages()
@@ -5889,9 +5912,9 @@ class AutoTyper:
         """Drop the pool on screen - after saying so.  One pool must
         always remain, because the typing thread needs a pool to read."""
         if len(self.profiles) < 2:
-            messagebox.showinfo("One pool left",
-                                "Raze needs at least one message pool.",
-                                parent=self.root)
+            self._confirm("One pool left",
+                          "Raze needs at least one message pool.",
+                          confirm_text="OK", cancel_text=None)
             return
         name = self.active_profile
         if not self._confirm("Delete pool",
@@ -5961,19 +5984,18 @@ class AutoTyper:
         if not key:
             return
         if not hotkeymod.is_valid(key):
-            messagebox.showerror("Invalid hotkey",
-                                 f"'{key}' is not a valid key.\n\n"
-                                 "Use a single key such as f8.",
-                                 parent=self.root)
+            self._confirm("Invalid hotkey", "Use a single key such as f8.",
+                          confirm_text="OK", cancel_text=None)
             return
         clash = self._others_own(key, "start")
         if clash:
-            messagebox.showerror("Hotkey in use",
-                                 f"{key} is already the {clash[0][0]} key.",
-                                 parent=self.root)
+            self._confirm("Hotkey in use",
+                          f"{key} is already the {clash[0][0]} key.",
+                          confirm_text="OK", cancel_text=None)
             return
         if not self.hotkey_listener.set_hotkey(key, self._request_start):
-            messagebox.showerror("Hotkey error", f"Could not register {key}.", parent=self.root)
+            self._confirm("Hotkey error", f"Could not register {key}.",
+                          confirm_text="OK", cancel_text=None)
             return
         self._retire(self.start_key, key)
         self.start_key = hotkeymod.normalise(key)
@@ -5986,19 +6008,18 @@ class AutoTyper:
         if not key:
             return
         if not hotkeymod.is_valid(key):
-            messagebox.showerror("Invalid hotkey",
-                                 f"'{key}' is not a valid key.\n\n"
-                                 "Use a single key such as f9.",
-                                 parent=self.root)
+            self._confirm("Invalid hotkey", "Use a single key such as f9.",
+                          confirm_text="OK", cancel_text=None)
             return
         clash = self._others_own(key, "stop")
         if clash:
-            messagebox.showerror("Hotkey in use",
-                                 f"{key} is already the {clash[0][0]} key.",
-                                 parent=self.root)
+            self._confirm("Hotkey in use",
+                          f"{key} is already the {clash[0][0]} key.",
+                          confirm_text="OK", cancel_text=None)
             return
         if not self.hotkey_listener.set_hotkey(key, self._request_stop):
-            messagebox.showerror("Hotkey error", f"Could not register {key}.", parent=self.root)
+            self._confirm("Hotkey error", f"Could not register {key}.",
+                          confirm_text="OK", cancel_text=None)
             return
         self._retire(self.stop_key, key)
         self.stop_key = hotkeymod.normalise(key)
@@ -6011,19 +6032,18 @@ class AutoTyper:
         if not key:
             return
         if not hotkeymod.is_valid(key):
-            messagebox.showerror("Invalid hotkey",
-                                 f"'{key}' is not a valid key.\n\n"
-                                 "Use a single key such as f6.",
-                                 parent=self.root)
+            self._confirm("Invalid hotkey", "Use a single key such as f6.",
+                          confirm_text="OK", cancel_text=None)
             return
         clash = self._others_own(key, "pause")
         if clash:
-            messagebox.showerror("Hotkey in use",
-                                 f"{key} is already the {clash[0][0]} key.",
-                                 parent=self.root)
+            self._confirm("Hotkey in use",
+                          f"{key} is already the {clash[0][0]} key.",
+                          confirm_text="OK", cancel_text=None)
             return
         if not self.hotkey_listener.set_hotkey(key, self._request_pause):
-            messagebox.showerror("Hotkey error", f"Could not register {key}.", parent=self.root)
+            self._confirm("Hotkey error", f"Could not register {key}.",
+                          confirm_text="OK", cancel_text=None)
             return
         self._retire(self.pause_key, key)
         self.pause_key = hotkeymod.normalise(key)
@@ -6036,19 +6056,18 @@ class AutoTyper:
         if not key:
             return
         if not hotkeymod.is_valid(key):
-            messagebox.showerror("Invalid hotkey",
-                                 f"'{key}' is not a valid key.\n\n"
-                                 "Use a single key such as f7.",
-                                 parent=self.root)
+            self._confirm("Invalid hotkey", "Use a single key such as f7.",
+                          confirm_text="OK", cancel_text=None)
             return
         clash = self._others_own(key, "resume")
         if clash:
-            messagebox.showerror("Hotkey in use",
-                                 f"{key} is already the {clash[0][0]} key.",
-                                 parent=self.root)
+            self._confirm("Hotkey in use",
+                          f"{key} is already the {clash[0][0]} key.",
+                          confirm_text="OK", cancel_text=None)
             return
         if not self.hotkey_listener.set_hotkey(key, self._request_resume):
-            messagebox.showerror("Hotkey error", f"Could not register {key}.", parent=self.root)
+            self._confirm("Hotkey error", f"Could not register {key}.",
+                          confirm_text="OK", cancel_text=None)
             return
         self._retire(self.resume_key, key)
         self.resume_key = hotkeymod.normalise(key)
@@ -6113,8 +6132,9 @@ class AutoTyper:
         self.passes = 0
         self.messages = self._collect_messages()
         if not self.messages:
-            messagebox.showwarning("No messages", "Add at least one message before starting.",
-                                    parent=self.root)
+            self._confirm("No messages",
+                          "Add at least one message before starting.",
+                          confirm_text="OK", cancel_text=None)
             return
         self._tab_in_stop = False
         if self._focus_refused():

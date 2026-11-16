@@ -1167,6 +1167,28 @@ def run():
             "keeping your own name is not a duplicate",
             plan == {"ok": True, "name": "Ranked"}, str(plan))
 
+        # one line is all a baked dialog can show: the artwork has no
+        # newline handling, and a line past ~52 characters is ellipsized
+        line = A.dialog_line(ValueError("could not open\nthe file"),
+                             "fallback")
+        failures += not _check(
+            "an exception's own line breaks collapse away",
+            line == "could not open the file", repr(line))
+        line = A.dialog_line(
+            "the file you picked is somewhere very deep indeed and "
+            "cannot be read", "fallback")
+        failures += not _check(
+            "a long message cuts on a word boundary, under the limit",
+            len(line) <= 52 and line.endswith("...") and " indeed" in line
+            and "cannot" not in line, repr(line))
+        failures += not _check(
+            "nothing readable falls back to the caller's own words",
+            A.dialog_line("", "Could not read that file.")
+            == "Could not read that file."
+            and A.dialog_line(None, "fb") == "fb",
+            repr((A.dialog_line("", "Could not read that file."),
+                  A.dialog_line(None, "fb"))))
+
         # the heartbeat's write gate: an edit is on disk within a couple
         # of seconds, history within a minute - and the write itself
         # re-marks the dirty flag (it flushes the number fields through
