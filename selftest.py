@@ -1130,6 +1130,43 @@ def run():
             profiles == {"Default": A.SAMPLE_MESSAGES}
             and active == "Default", str((profiles, active)))
 
+        # naming a pool: the first free Profile N, and the three
+        # refusals a typed name can earn - nothing typed, too long,
+        # someone else's name
+        failures += not _check(
+            "a second pool offers Profile 1",
+            A.next_profile_name({"Default": []}) == "Profile 1",
+            repr(A.next_profile_name({"Default": []})))
+        failures += not _check(
+            "the offer skips the names already in use",
+            A.next_profile_name({"Profile 1": [], "Profile 2": []})
+            == "Profile 3",
+            repr(A.next_profile_name({"Profile 1": [], "Profile 2": []})))
+        plan = A.profile_name_plan({"Default": []}, None, "  Ranked  ")
+        failures += not _check(
+            "a typed name is trimmed and accepted",
+            plan == {"ok": True, "name": "Ranked"}, str(plan))
+        plan = A.profile_name_plan({"Default": []}, None, "   ")
+        failures += not _check(
+            "an empty name is refused with a reason",
+            plan == {"ok": False, "error": "Give the pool a name."},
+            str(plan))
+        plan = A.profile_name_plan({"Default": []}, None, "x" * 21)
+        failures += not _check(
+            "a name past twenty characters is refused",
+            plan == {"ok": False, "error": "Keep the name to 20 characters."},
+            str(plan))
+        plan = A.profile_name_plan({"Default": [], "Ranked": []}, None,
+                                   "Ranked")
+        failures += not _check(
+            "another pool's name is refused as taken",
+            plan == {"ok": False, "error": "That name is already taken."},
+            str(plan))
+        plan = A.profile_name_plan({"Ranked": []}, "Ranked", "Ranked")
+        failures += not _check(
+            "keeping your own name is not a duplicate",
+            plan == {"ok": True, "name": "Ranked"}, str(plan))
+
         # the heartbeat's write gate: an edit is on disk within a couple
         # of seconds, history within a minute - and the write itself
         # re-marks the dirty flag (it flushes the number fields through

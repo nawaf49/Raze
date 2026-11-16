@@ -692,6 +692,39 @@ def profiles_plan(cfg):
     return profiles, active
 
 
+def next_profile_name(profiles):
+    """The first free `Profile N` for the pool about to be created.  Pure.
+
+    Counting stops at the first gap, so deleting `Profile 2` hands that
+    name to the next pool rather than stretching the list forever.
+    """
+    n = 1
+    while "Profile %d" % n in (profiles or {}):
+        n += 1
+    return "Profile %d" % n
+
+
+def profile_name_plan(profiles, current, raw):
+    """What a pool name typed into the prompt becomes.  Pure.
+
+    Returns `{"ok": True, "name": ...}` or `{"ok": False, "error": ...}` -
+    never raises, never writes.  The three refusals are the ones the user
+    can actually fix: nothing typed, longer than the 20 characters the
+    dropdown can show without ellipsising, and a name another pool already
+    holds.  Keeping your own name is not a duplicate - that is what lets
+    the dialog be opened just to look.
+    """
+    name = str(raw or "").strip()
+    if not name:
+        return {"ok": False, "error": "Give the pool a name."}
+    if len(name) > 20:
+        return {"ok": False, "error": "Keep the name to 20 characters."}
+    taken = {str(other) for other in (profiles or {})}
+    if name in taken and name != current:
+        return {"ok": False, "error": "That name is already taken."}
+    return {"ok": True, "name": name}
+
+
 def pretty_day(day):
     """'2026-10-21' -> 'October 21 Wednesday, 2026'."""
     try:
@@ -4705,6 +4738,8 @@ class AutoTyper:
         self.profile_menu.pack(side="left")
         Pill(prow, "New", self._new_profile, kind="glass", height=30,
              font=(FONT_SB, -11)).pack(side="left", padx=(8, 0))
+        Pill(prow, "Rename", self._rename_profile, kind="glass", height=30,
+             font=(FONT_SB, -11)).pack(side="left", padx=(6, 0))
         Pill(prow, "Delete", self._delete_profile, kind="danger", height=30,
              font=(FONT_SB, -11)).pack(side="left", padx=(6, 0))
 
@@ -5495,6 +5530,132 @@ class AutoTyper:
             return False
         return state["ok"]
 
+    def _prompt(self, title, message, initial="", validate=None):
+        """A one-field dialog in the app's own style.  Returns the text.
+
+        The same shell as `_confirm` - emblem, baked title, two pills,
+        Escape to cancel - plus a `CTkEntry` and a baked line under it
+        that carries `validate`'s complaint (`text -> (ok, error)`).
+        A refused name keeps the dialog open with what was typed still in
+        the field: throwing the text away over a complaint would be the
+        rudest possible answer to a typo.  Returns the accepted string,
+        or None on cancel.  Never raises - a dialog that cannot be built
+        is a cancelled prompt, not a crash on a button press.
+        """
+        state = {"value": None}
+        try:
+            dialog = ctk.CTkToplevel(self.root)
+        except Exception:
+            return None
+        try:
+            # w/h are device px, for centring maths only; the geometry
+            # string must be in design px because CTkToplevel scales WxH.
+            # 248, not the 225 the stack measures at 100%: below ~60%
+            # scale the artwork grows past its pinned floor (rounded font
+            # metrics), and the stack's worst case - measured across
+            # 0.50-1.25 - is 232.  The spare sits between the complaint
+            # line and the pills, where _confirm's spare sits too.
+            w, h = px(452), px(248)
+            dialog.withdraw()
+            dialog.title(title)
+            dialog.configure(fg_color=BG)
+            dialog.resizable(False, False)
+            try:
+                dialog.iconbitmap(default="")
+            except Exception:
+                pass
+
+            body = ctk.CTkFrame(dialog, fg_color="transparent")
+            # design px: CTk pack scales padx/pady by the widget scaling
+            body.pack(fill="both", expand=True, padx=26, pady=(22, 20))
+
+            top = ctk.CTkFrame(body, fg_color="transparent")
+            top.pack(fill="x")
+            try:
+                mark = tk.Label(top, image=emblem_photo(28), bd=0,
+                                highlightthickness=0, bg=BG)
+                mark.pack(side="left", padx=(0, px(12)))
+            except Exception:
+                pass
+            BakedLabel(top, title, size=17, weight="SemiBold", color=TEXT,
+                       height=26, anchor="w").pack(side="left")
+
+            BakedLabel(body, message, size=12, color=MUTED, height=18,
+                       anchor="w").pack(fill="x", pady=(12, 0))
+
+            var = tk.StringVar(value=initial)
+            field = ctk.CTkEntry(body, textvariable=var, height=40,
+                                 corner_radius=10, font=(FONT_SB, -13),
+                                 fg_color=SURFACE_2, border_color=BORDER_2,
+                                 text_color=TEXT)
+            field.pack(fill="x", pady=(10, 0))
+
+            # the complaint line holds one baked space until it has one -
+            # an empty render has no artwork and no box to stand in.
+            # AMBER is right here: it is a refusal, not a piece of data
+            note = BakedLabel(body, " ", size=11, color=AMBER, height=16,
+                              anchor="w")
+            note.pack(fill="x", pady=(6, 0))
+
+            row = ctk.CTkFrame(body, fg_color="transparent")
+            row.pack(fill="x", side="bottom", pady=(14, 0))
+
+            def close(value):
+                state["value"] = value
+                try:
+                    dialog.grab_release()
+                except Exception:
+                    pass
+                dialog.destroy()
+
+            def accept(event=None):
+                text = var.get()
+                try:
+                    if validate is None:
+                        ok, complaint = True, ""
+                    else:
+                        ok, complaint = validate(text)
+                except Exception:
+                    ok, complaint = False, "That name cannot be used."
+                if not ok:
+                    note.set_text(complaint or "That name cannot be used.")
+                    return "break"          # the field keeps the text
+                close(text)
+                return "break"
+
+            Pill(row, "Cancel", lambda: close(None), kind="glass",
+                 height=36, font=(FONT_SB, -12)).pack(side="right")
+            Pill(row, "OK", accept, kind="solid", height=36,
+                 font=(FONT_SB, -12)).pack(side="right", padx=(0, 8))
+
+            # centre it over the app; x/y are already device px and pass
+            # through CTk's geometry untouched, WxH must stay design px
+            x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
+            y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
+            dialog.geometry(f"452x248+{x}+{y}")
+            dialog.bind("<Escape>", lambda e: close(None))
+            field.bind("<Return>", accept)
+            dialog.transient(self.root)
+            dialog.deiconify()
+            dialog.lift()
+            try:
+                self._set_window_icon(dialog)
+            except Exception:
+                pass
+            try:
+                field.focus_set()
+                field.select_range(0, "end")
+            except Exception:
+                pass
+            try:
+                dialog.grab_set()
+            except Exception:
+                pass
+            self.root.wait_window(dialog)
+        except Exception:
+            return None
+        return state["value"]
+
     def _auto_install(self):
         """Install Raze on the first run, with nothing to ask.
 
@@ -5663,15 +5824,60 @@ class AutoTyper:
             pass
 
     def _new_profile(self):
-        """A fresh, empty pool under the first free `Profile N` name."""
+        """A fresh, empty pool, named in the prompt before it is made.
+
+        The suggested name is the first free `Profile N`; typing nothing
+        keeps it, Escape makes no pool at all.  The outgoing pool is
+        stored first, exactly as a switch does, so nothing typed into the
+        box is lost to the new one.
+        """
         self.profiles[self.active_profile] = self._collect_messages()
-        n = 1
-        while "Profile %d" % n in self.profiles:
-            n += 1
-        name = "Profile %d" % n
+        suggested = next_profile_name(self.profiles)
+
+        def check(text):
+            if not str(text or "").strip():
+                return True, ""             # nothing typed: the offer stands
+            return profile_name_plan(self.profiles, None, text)
+
+        name = self._prompt("New pool", "Name this pool.",
+                            initial=suggested, validate=check)
+        if name is None:
+            return                          # cancelled: no pool, nothing moved
+        if not str(name or "").strip():
+            name = suggested                # whitespace keeps the offer too
         self.profiles[name] = []
         self.active_profile = name
         self.editor.delete("1.0", END)
+        self._update_pool_meta()
+        try:
+            self.profile_menu.configure(values=list(self.profiles))
+            self.profile_menu.set(name)
+        except Exception:
+            pass
+
+    def _rename_profile(self):
+        """Give the open pool another name, keeping its place in the list.
+
+        The dictionary is rebuilt in its existing order rather than popped
+        and re-inserted, so renaming the first pool does not shuffle it to
+        the bottom of the dropdown.  Nothing else about the pool moves:
+        the messages, the editor and the active name all stay put.
+        """
+        current = self.active_profile
+        name = self._prompt(
+            "Rename pool", "Give this pool a new name.",
+            initial=current,
+            validate=lambda text: profile_name_plan(self.profiles,
+                                                    current, text))
+        if name is None or name == current:
+            return                          # cancelled, or nothing changed
+        renamed = {}
+        for other, msgs in self.profiles.items():
+            renamed[name if other == current else other] = msgs
+        self.profiles = renamed
+        self.active_profile = name
+        # stores the pool under its new name and marks the config dirty
+        # for the heartbeat - one call, as for any other pool edit
         self._update_pool_meta()
         try:
             self.profile_menu.configure(values=list(self.profiles))
