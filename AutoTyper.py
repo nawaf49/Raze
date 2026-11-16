@@ -1541,6 +1541,21 @@ def update_is_newer(tag, current=APP_VERSION):
     return new > cur
 
 
+def updates_unseen(seen, current):
+    """True when the running version has not been looked at yet.
+
+    Pure so the selftest can pin the rule.  This is what puts the badge
+    on the Updates tab after a background update: no stored version at
+    all - a config from before the key existed, or a fresh install -
+    counts as unseen, and so does one that will not parse; the worst
+    case either way is the badge sitting there until the tab is opened
+    once.  Only an exact match silences it.
+    """
+    if not seen:
+        return True
+    return parse_version(seen) != parse_version(current)
+
+
 def update_release(payload):
     """Pull what the updater needs out of one GitHub release JSON object.
 
@@ -3031,6 +3046,18 @@ class AutoTyper:
         # value arrives with the config in _apply_config, but the flag has
         # to exist before it so nothing reads an attribute that is not there
         self.install_asked = False
+        # the update badge on the Updates tab: the version whose list has
+        # been opened (config), whether the running one differs (dot and
+        # banner), and whether this visit is the one explaining it.  The
+        # real values arrive with the config, but every one of them is
+        # read by the heartbeat and the tab switch, so they exist first
+        self.seen_version = None
+        self._updates_unseen = False
+        self._updates_banner = False
+        self._updates_banner_row = None
+        # width of the tag column in the Updates list, measured once and
+        # reused - see _render_updates
+        self._updates_tag_room = None
         # (ok, error) from a running install, set by the worker thread and
         # consumed by the heartbeat - the thread boundary rule again
         self._install_done = None
@@ -3206,6 +3233,12 @@ class AutoTyper:
                 self.root.attributes("-alpha", min(1.0, t / INTRO_FADE_MS))
                 live = t < INTRO_FADE_MS
                 for widget, x, y, delay, dx, dy in items:
+                    # The badge is clickable the moment it is placed, and
+                    # opening its tab hides it - settling a widget that has
+                    # been hidden since would put it back on the screen
+                    # after the config said it was already seen.
+                    if not widget.winfo_ismapped():
+                        continue
                     p = (t - delay) / INTRO_MOVE_MS
                     if p < 0.0:
                         p = 0.0
@@ -3278,6 +3311,15 @@ class AutoTyper:
         self._underline_x = (first_x0 + first_x1) // 2 - 12
         self._anim(self._underline, self._underline_x, 52,
                    delay=INTRO_STAGGER_MS * 0.75, dy=INTRO_DROP)
+
+        # --- the badge beside the Updates tab.  Built but never placed:
+        # _set_updates_dot owns every move it makes, so a version whose list
+        # has already been opened leaves nothing on the bar to measure, to
+        # capture, or for the opening animation to settle.  y is the tab
+        # label's own centre - the label sits 21..45, the dot is 14 tall.
+        self._updates_dot = BakedLabel(self.root, "\u25cf", size=10,
+                                       color=BLUE, height=14, cursor="hand2")
+        self._updates_dot.bind("<Button-1>", lambda e: self.show("updates"))
 
         # --- actions, far right
         self.status_dot = BakedLabel(self.root, "\u25cf", size=13, color=FAINT)
@@ -3436,6 +3478,37 @@ class AutoTyper:
         item = self._tab_items[key][0]
         item.set_color(TEXT if on else MUTED)
 
+    def _set_updates_dot(self, visible):
+        """Show or hide the badge beside the Updates tab.
+
+        Placed exactly once, at its final spot.  Before the opening
+        animation it travels down with the tabs - _anim hands it to
+        _play_intro, which settles only what it was given.  After the
+        animation that has already run, so a later appearance goes
+        straight to its final position instead.  Hiding takes it back out
+        of any opening still in flight as well, because the widget list
+        _play_intro works from was copied when it began.
+        """
+        if not hasattr(self, "_updates_dot"):
+            return
+        try:
+            if visible:
+                x = self._tab_items["updates"][2] + 4
+                if not getattr(self, "_intro_done", False):
+                    self._anim(self._updates_dot, x, 26,
+                               delay=INTRO_STAGGER_MS * 0.75, dy=INTRO_DROP)
+                else:
+                    self._move(self._updates_dot, x, 26)
+            else:
+                self._intro_items = [it for it in self._intro_items
+                                     if it[0] is not self._updates_dot]
+                # "forget" is a subcommand, not an option - `place <path>
+                # -forget` is a bad option and raises, which the guard below
+                # would swallow into a badge that never leaves the bar
+                self.root.tk.call("place", "forget", self._updates_dot._w)
+        except Exception:
+            pass
+
     def show(self, key):
         """Switch the visible view, with a short slide into place.
 
@@ -3464,6 +3537,18 @@ class AutoTyper:
         if key == "history":
             self._refresh_history()
         elif key == "updates":
+            # Opening the list is what marks the new version seen: the dot
+            # goes, the config records it, and this one visit carries the
+            # banner saying what the update was - the rows below it are the
+            # full story from here on.
+            if self._updates_unseen:
+                self._updates_unseen = False
+                self.seen_version = APP_VERSION
+                self._set_updates_dot(False)
+                self._updates_banner = True
+                self._save_config()
+            else:
+                self._updates_banner = False
             # rows only fit once the panel has its real height, so the list
             # is redrawn on every open - the same dance _refresh_history does
             self._render_updates()
@@ -3961,12 +4046,13 @@ class AutoTyper:
     def _render_updates(self):
         """One row per version, newest first, as many as the panel shows.
 
-        The same rule as the history list: nothing scrolls, so only the
-        rows that fit are built.  The list is fixed (UPDATES), so unlike
-        history this only has to land right once - but the panel has no
-        real height until the tab has been laid out, which is why show()
-        calls it on every open and after_idle draws it again, exactly
-        like _refresh_history.
+        The first visit after an update also gets the banner above them
+        (see show).  The same rule as the history list: nothing scrolls,
+        so only the rows that fit are built.  The list is fixed (UPDATES),
+        so unlike history this only has to land right once - but the panel
+        has no real height until the tab has been laid out, which is why
+        show() calls it on every open and after_idle draws it again,
+        exactly like _refresh_history.
         """
         if not hasattr(self, "updates_list"):
             return
@@ -3977,6 +4063,13 @@ class AutoTyper:
                 except Exception:
                     pass
             self._updates_rows = []
+            banner = getattr(self, "_updates_banner_row", None)
+            if banner is not None:
+                try:
+                    banner[0].destroy()
+                except Exception:
+                    pass
+            self._updates_banner_row = None
 
             row_h, gap = 34, 12                     # pitch and spacing
             room = self.updates_list.winfo_height()
@@ -3987,17 +4080,58 @@ class AutoTyper:
                 # has been (UPDATES is short enough that this is all of it)
                 max_rows = 14
 
+            # Every body in the list starts on one x.  "1.xx" tags are all
+            # naturally the same width, but the banner's tag is a word -
+            # "UPDATED" - and left to itself it would push its own text,
+            # and only its own, further right than every row underneath.
+            # So the tag column is pinned to the widest tag that can ever
+            # stand in it, and every body reads the same 18 px after it.
+            tag_room = self._updates_tag_room
+            if not tag_room:
+                tag_room = 0
+                for label in ["UPDATED"] + [v for v, _l in UPDATES]:
+                    _art, dims = text_photo(label, 13, "SemiBold", TEXT,
+                                            0.0, False, True, None, None)
+                    tag_room = max(tag_room, (dims[0] + 2) / S)
+                self._updates_tag_room = tag_room
+
+            def cell(row, text, color):
+                # grid, not pack: only a grid column can be given a
+                # *minimum* width.  A frame's own width option is ignored
+                # for as long as pack propagation sizes it from its
+                # children, so a box around the tag stayed as narrow as
+                # the tag and every body still began where its tag ended.
+                row.grid_columnconfigure(0, minsize=px(tag_room))
+                tag = BakedLabel(row, text, size=13, weight="SemiBold",
+                                 color=color, height=22, anchor="w", bg=FIELD)
+                tag.grid(row=0, column=0, sticky="w")
+                return tag
+
+            # The banner the first visit after a background update carries.
+            # Held apart from _updates_rows so "the shipped version heads
+            # the list" keeps reading the first *version* row, and it takes
+            # one slot of the budget like any other row: the panel fits
+            # what it fits, banner or no banner, so the last row can never
+            # be pushed over the edge by it.
+            if self._updates_banner:
+                brow = tk.Frame(self.updates_list, bg=FIELD)
+                brow.pack(fill="x", pady=(0, px(gap)))
+                tag = cell(brow, "UPDATED", BLUE)
+                body = BakedLabel(
+                    brow, "Raze updated to %s - what changed is below."
+                    % APP_VERSION, size=12, color=MUTED, height=22,
+                    anchor="w", bg=FIELD)
+                body.grid(row=0, column=1, sticky="w", padx=(18, 0))
+                self._updates_banner_row = (brow, tag, body)
+                max_rows = max(1, max_rows - 1)
+
             for version, line in UPDATES[:max_rows]:
                 row = tk.Frame(self.updates_list, bg=FIELD)
                 row.pack(fill="x", pady=(0, px(gap)))
-                # every version is "1.xx", so the tags are naturally the
-                # same width and the lines line up without a pinned box
-                tag = BakedLabel(row, version, size=13, weight="SemiBold",
-                                 color=TEXT, height=22, anchor="w", bg=FIELD)
-                tag.pack(side="left")
+                tag = cell(row, version, TEXT)
                 body = BakedLabel(row, line, size=12, color=MUTED, height=22,
                                   anchor="w", bg=FIELD)
-                body.pack(side="left", padx=(18, 0))
+                body.grid(row=0, column=1, sticky="w", padx=(18, 0))
                 self._updates_rows.append((row, tag, body))
         except Exception:
             pass
@@ -4363,6 +4497,18 @@ class AutoTyper:
         self.editor.insert("1.0", "\n".join(msgs))
         self._update_pool_meta()
         self.install_asked = bool(c.get("install_asked"))
+        # The badge on the Updates tab: has the running version's list been
+        # opened?  A config written before the key existed answers "no" -
+        # which is right, that user has never seen these lines - and so does
+        # one that will not parse; the worst case is a dot until the tab is
+        # opened once.  Shown here, while the opening animation still owns
+        # the nav, so it settles with the tabs; anything shown later has to
+        # place it directly (see _set_updates_dot).
+        self.seen_version = c.get("seen_version")
+        self._updates_unseen = updates_unseen(self.seen_version, APP_VERSION)
+        if self._updates_unseen:
+            self._set_updates_dot(True)
+
 
     def _commit_fields(self):
         """Read what is on screen, not what was there before the user typed.
@@ -4394,6 +4540,7 @@ class AutoTyper:
             "history": [{"t": t, "m": m} for t, m in self.history[-HISTORY_KEEP:]],
             "daily": self.daily,
             "install_asked": self.install_asked,
+            "seen_version": self.seen_version,
         })
         try:
             write_config(self.cfg)

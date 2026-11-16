@@ -39,6 +39,12 @@ def main():
     root = ctk.CTk()
     app = A.AutoTyper(root)
     root.attributes("-alpha", 0.0)
+    # Opening the Updates tab records seen_version through _save_config, and
+    # the real config decides the badge at construction - neither may happen
+    # in a test, so the save is stubbed here and the badge state is forced
+    # in open_updates.
+    app._save_config = lambda: None
+    app._set_updates_dot(False)
     root.update_idletasks()
 
     def measure():
@@ -179,6 +185,12 @@ def main():
         root.after(200, open_updates)
 
     def open_updates():
+        # the badge state is forced, never read: whatever the tester's own
+        # config says is irrelevant, and the first visit is made to be the
+        # one that clears it
+        app.seen_version = "1.18"
+        app._updates_unseen = True
+        app._set_updates_dot(True)
         app.show("updates")
         root.after(400, measure_updates)
 
@@ -200,7 +212,69 @@ def main():
               bool(rows) and 0 < bottom <= room,
               "rows %s bottom %s room %s" % (len(rows), bottom, room))
 
+        # --- the badge.  The first visit is the one that marks the new
+        # version seen: the dot goes, the config is told (stubbed above),
+        # and that visit alone carries the banner explaining the update.
+        banner = getattr(app, "_updates_banner_row", None)
+        check("the first visit clears the badge",
+              not app._updates_unseen and app.seen_version == A.APP_VERSION
+              and not app._updates_dot.winfo_ismapped(),
+              "unseen %s seen %s dot mapped %s"
+              % (app._updates_unseen, app.seen_version,
+                 app._updates_dot.winfo_ismapped()))
+        check("the first visit carries the update banner",
+              app._updates_banner and banner is not None
+              and banner[1]._text == "UPDATED"
+              and banner[1]._color == A.BLUE
+              and banner[2]._text.startswith("Raze updated to"),
+              "flag %s tag %r colour %r body %r"
+              % (app._updates_banner,
+                 banner[1]._text if banner else None,
+                 banner[1]._color if banner else None,
+                 banner[2]._text if banner else None))
+        check("the banner sits above the rows",
+              banner is not None and bool(rows)
+              and banner[0].winfo_y() < rows[0][0].winfo_y(),
+              "banner %s row %s"
+              % (banner[0].winfo_y() if banner else None,
+                 rows[0][0].winfo_y() if rows else None))
+        # one column for every body: the banner's tag is a word and the
+        # rows' are versions, and a body that starts where its own tag
+        # ends reads as a table with a broken column
+        starts = set()
+        if banner is not None:
+            starts.add(banner[2].winfo_x())
+        starts.update(b.winfo_x() for _r, _t, b in rows)
+        check("every body in the list starts on one x",
+              len(starts) == 1, str(sorted(starts)))
+
+        # its own place on the bar: right of every tab, left of the uptime
+        # box - the one gap on the status line with room for it
+        app._set_updates_dot(True)
+        root.update_idletasks()
+        dot = app._updates_dot
+        dx0 = dot.winfo_x()
+        dx1 = dx0 + dot.winfo_width()
+        tabs_right = max(x1 for _i, _x0, x1 in app._tab_items.values()) * A.S
+        ux0 = app.uptime_text.winfo_x()
+        check("the badge dot sits between the tabs and the uptime box",
+              dot.winfo_ismapped() and dx0 >= tabs_right and dx1 <= ux0,
+              "dot %s..%s tabs %s uptime %s"
+              % (dx0, dx1, tabs_right, ux0))
+
+        # the badge state worth an eye: banner on the panel, dot on the bar
         hwnd = int(root.wm_frame(), 16)
+        cw.capture(hwnd, r"C:\Users\nawaf\AppData\Local\Temp\opencode\updates_badge.png")
+
+        # coming back is an ordinary visit: nothing left to explain, and
+        # the bar returns to how it looks the rest of the time
+        app.show("updates")
+        app._set_updates_dot(False)
+        root.update_idletasks()
+        check("a later visit carries no banner",
+              not app._updates_banner and app._updates_banner_row is None,
+              "flag %s row %s" % (app._updates_banner,
+                                  app._updates_banner_row))
         cw.capture(hwnd, r"C:\Users\nawaf\AppData\Local\Temp\opencode\updates.png")
 
         root.after(200, done)

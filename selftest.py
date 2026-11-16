@@ -1279,6 +1279,25 @@ def run():
     failures += not _check("every update line fits its row",
                            longest > 0 and longest <= 78, str(longest))
 
+    # The badge beside the Updates tab: it shows until the running
+    # version's list has been opened once, and it takes an exact match to
+    # silence it.  A config written before the key existed, or one
+    # carrying something that is not a version at all, both read as "not
+    # seen yet" - the worst case either way is a dot until the tab is
+    # opened once.
+    failures += not _check("no stored version means unseen",
+                           A.updates_unseen(None, A.APP_VERSION))
+    failures += not _check("the shipped version is already seen",
+                           not A.updates_unseen(A.APP_VERSION, A.APP_VERSION),
+                           str(A.APP_VERSION))
+    failures += not _check("an older version is unseen",
+                           A.updates_unseen("1.0", A.APP_VERSION))
+    failures += not _check("a version that will not parse is unseen",
+                           A.updates_unseen("latest", A.APP_VERSION))
+    failures += not _check("a v prefix still matches the running version",
+                           not A.updates_unseen("v" + A.APP_VERSION,
+                                                A.APP_VERSION))
+
     print()
     if failures:
         print(f"SELFTEST FAILED - {failures} check(s) did not pass")
