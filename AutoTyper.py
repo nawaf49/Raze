@@ -241,7 +241,12 @@ TAB_WARM_MS = 1500           # when the off-screen tabs are built ahead
 # asks Tk for everything it still owes, and two polls under RESTORE_QUIET_MS
 # in a row mean the paint has actually stopped.  RESTORE_MAX_MS caps how long
 # the window may stay invisible, whatever a pathological restore does.
-RESTORE_POLL_MS = 50
+# The poll runs at frame cadence: the paint itself is the long part
+# (~120-320 ms, dearer the longer the window was away), but the reveal also
+# waits on the schedule - the wait before the first poll plus two quiet ones -
+# so at 50 ms that tail cost up to 150 ms on top of the paint, against 48 ms
+# at 16.  Probed across 0.5 s / 2 s / 60 s absences: reveal ~300-420 ms.
+RESTORE_POLL_MS = 16
 RESTORE_QUIET_MS = 8
 RESTORE_QUIET_NEEDED = 2
 RESTORE_MAX_MS = 1500
