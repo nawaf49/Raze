@@ -72,9 +72,9 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 131 headless checks, run via `Raze.exe --selftest` |
+| `selftest.py` | 168 headless checks, run via `Raze.exe --selftest` |
 | `pause_and_toast.py` | 57 checks: pause/resume/toast routing, a tab-in stop continued by the resume key and begun again by the start key, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
-| `layout_check.py` | 31 checks: the window fits the work area, the uptime on the status line, the loop counter's colour, the four keycaps, the hotkeys card and button hover backgrounds, the Updates tab's rows, captures three tabs |
+| `layout_check.py` | 39 checks: the window fits the work area, the uptime on the status line, the loop counter's colour, the four keycaps, the hotkeys card and button hover backgrounds, the History tab's two record tiles (a forced record reaching its tile), the Updates tab's rows and its update-done badge (every row body on one x), captures the badge state plus typer/hotkeys/history/updates |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `rpc.py` | Discord presence: named pipe over ctypes, its own thread |
 | `rpc_check.py` | 49 checks: the presence protocol against a fake local pipe |
@@ -152,6 +152,13 @@ down together, still sharp.
   - **CTk widgets** scale their own `configure(width=…)`, `place` x/y and
     `pack`/`grid` padx/pady by `S` — pass them **design px, never
     `px()`**. A `px()` inside a CTk pack doubles the offset at 150%.
+    `CTkCheckBox` scales still more internally — `checkbox_width`,
+    `checkbox_height`, `corner_radius` and `border_width` all go through
+    `_apply_widget_scaling` too. **`random_box` passes `px(20)`/`px(5)`
+    and is therefore double-scaled at every scale but 100%** (at 125% it
+    draws 25 design px wide instead of 20): latent, the sweep stays
+    clean because it only makes the box bigger. The caption-row startup
+    checkbox is the correct spelling — plain design px.
   - `CTkToplevel.geometry()` scales the `WxH` string but passes `+x+y`
     through raw — design px for the size, device px for the position.
   - `winfo_reqwidth()/winfo_width()` always report **device px**. If the
@@ -385,6 +392,22 @@ polish on an already-done turn, so no click is ever delayed by it.
   built, the rest are dropped, and the panel has no real height until the
   tab has been laid out, so `show()` renders it on open and again on
   `after_idle`.
+- **The Updates tab badges itself once.** A blue dot sits beside the tab
+  until the user opens the tab after an update; the open view then leads
+  with one `UPDATED` banner row (BLUE tag + "Raze updated to <version> -
+  what changed is below." — approved verbatim). The state is the config's
+  `seen_version` against the pure `updates_unseen()` (only an exact
+  `parse_version` match of the running version silences it): the dot is
+  built in `_build_nav` but placed only by `_set_updates_dot(True)` from
+  `_apply_config` pre-intro, and `show()` clears on visit —
+  `seen_version = APP_VERSION`, dot hidden, the banner for that visit
+  only, `_save_config()` stubbed in harnesses. The banner lives in
+  `_updates_banner_row` (never `_updates_rows`) and consumes one
+  `max_rows` slot. Its tag column is pinned by
+  `grid_columnconfigure(0, minsize=...)`: a plain frame's `width=` is
+  ignored under pack propagation and `BakedLabel(min_width=)` right-aligns
+  text inside its box, so neither can pin it — every row body has to
+  start on one x, and layout_check asserts exactly that.
 - `_tab_anim` is a token: every switch supersedes a travel in flight, so
   rapid clicking starts each trip from wherever the last one reached, and
   the view that wins is always raised *from* the offset (it is lowered
@@ -490,6 +513,41 @@ end of the session.
   title and one body line, every message escaped — a stray `&` would make
   Windows reject the toast outright. `selftest` parses it back with
   `xml.etree.ElementTree`, and the same check covers the escaping.
+- **Two different icons, two different mechanisms.** The *body* emblem
+  rides in the payload: `toast_icon_path()` unpacks the largest PNG frame
+  of `raze.ico` (every frame `build_assets` writes is PNG-encoded) to one
+  fixed file in `%TEMP%` — same capped-cache rule as the update download,
+  rewritten whenever the bundled frame's size stops matching — and
+  `toast_xml` references it as `file:///` in an
+  `<image placement="appLogoOverride">` element. No icon:
+  `toast_icon_path` returns `None`, the image is omitted and the banner
+  goes out as before; an icon failure never blocks a toast.
+  The *header* (attribution area) name and tile are not in the payload at
+  all: starting with Windows 11 that area is shell-controlled and cannot
+  be overridden from toast XML — `appLogoOverride` only draws in the
+  visual area below it. Three things decide it, all keyed by the toast's
+  app id, and all three were wrong at once. (1) The Start Menu link's
+  `PKEY_AppUserModel_ID`: `_create_shortcut` stamps the target path (the
+  exact string `toast_app_id()` reports) after releasing the ShellLink
+  object, and `repair_shortcuts()` stamps links that predate it (rule:
+  `aumid_needs_stamp`). (2) The link's icon location — the tile is the
+  matched link's own icon, and every pre-fix link glued the index onto
+  the path (`"Raze.exe,0"`, a file that does not exist), so the shell
+  drew a blank page (rule: `icon_needs_fix`). (3) The registration at
+  `HKCU\Software\Classes\AppUserModelId\<AUMID>` carrying `DisplayName`
+  and `IconUri` — where an unpackaged app's header icon is actually read
+  from (what Firefox and the Community Toolkit write); no build of ours
+  ever wrote it until `register_aumid()` landed (pure plan:
+  `aumid_registry_plan` — a path AUMID spells as nested registry keys,
+  the same nesting Windows itself creates under
+  `Notifications\Settings`). The process agrees with all of it:
+  `_set_window_icon` sets the process AUMID to `toast_app_id()`; it set
+  `"Raze.AutoTyper.1"` before, which matched nothing. Confirmed live on
+  this machine with all three in place: the header shows the emblem.
+  Windows is known to *cache* the attribution icon (WindowsAppSDK #6882,
+  no invalidation API), so a generic header that survives the
+  registration wants a sign-out or a notification-platform restart — ask
+  before either.
 - `SHQueryUserNotificationState` decides whether Windows will show a banner
   at all. A full-screen game (VALORANT: `QUNS_BUSY`), a locked screen or
   quiet hours make Windows swallow a banner while the toast API still
@@ -562,11 +620,24 @@ payload that is unpacked from scratch on every launch.
 
 `%APPDATA%\Raze\config.json`. Keys: `msg_interval`, `loop`, `random`,
 `start_key`, `stop_key`, `pause_key`, `resume_key`, `messages`, `history`,
-`daily`, `install_asked`.
+`daily`, `install_asked`, `seen_version`, `best_sitting_msgs`,
+`best_sitting_s`.
 
 - `install_asked` is vestigial (see *Install*): the install question is
   gone, but the key stays readable and written on save — a config that
   carries it keeps carrying it — and nothing gates on it any more.
+
+- `seen_version` is the update-done badge (see *Tabs*): the last
+  `APP_VERSION` whose Updates tab was opened. The pure
+  `updates_unseen()` decides the dot from it; `show()` writes the
+  running version on the first visit after an update, through the same
+  `_save_config()` every harness stubs.
+
+- **"Start with Windows" is deliberately not a config key.** The Run
+  key is the store (see *Install*), so the box reads `startup_value()`
+  when it is built and re-reads it after every click — a config file
+  can never disagree with the machine about it, and a refused toggle
+  just stays where the registry is, with no word on screen.
 
 - `total_secs` used to be here: lifetime typing seconds, which the presence
   timer counted from. The timer is the app's own uptime now (see *Discord
@@ -576,6 +647,37 @@ payload that is unpacked from scratch on every launch.
 - `history` is a list of `{"t": "...", "m": "..."}`, capped at `HISTORY_KEEP`.
   Content and timestamps are **stored but never displayed** — the History tab
   shows day counts and a lifetime total only.
+- **The two personal bests the History tab shows are config keys**
+  (`best_sitting_msgs`, `best_sitting_s` in whole seconds), unlike the
+  Start-with-Windows box above. `read_config` defaults them to 0 — an
+  older config picks them up without ever having mentioned them —
+  `_apply_config` reads them through `_as_count` (a hand-edited string,
+  null or negative clamps to 0 and never reaches the UI or a `max()`),
+  and `_save_config` writes them back. The fold is the pure
+  `record_plan(cfg, sent, secs)` beside `group_history`: it reads `cfg`
+  and never writes it, returns **only its own two keys** so a record can
+  never be the reason something else drops out of the file, and a record
+  only ever moves up. Capture is `_record_session()`, called from
+  `_stop()` — the single point a session is over, since `_start` only
+  ever runs while `not typing` — and from `_on_close()` for one still
+  running; it is try/except-guarded (it sits inside the stop path, so
+  nothing in it may take the status line down with it) and calls
+  `_save_config()` + `_refresh_records()` only when a record actually
+  changed. `_refresh_records()` guards every tile with `getattr` because
+  the History tab builds lazily — it is often called before the tiles
+  exist as often as after, and the build calls it itself to seed them.
+- **The records strip is a pinned 76 px row between the HISTORY header
+  and the day list** — two `StatTile`s, so the two cards read as one
+  design. The card is a fixed 726 and the day-list holder expands into
+  whatever is left, so the list gives up a row or two rather than the
+  card growing into the footer. **The pin needs both propagation
+  switches**: `pack_propagate(False)` governs pack slaves only, and
+  these tiles are *gridded* — with only the pack call the strip came
+  out 200 tall (CTkFrame's default, taken from the tiles' own
+  requested height) and silently ate three day rows. Calling
+  `grid_propagate(False)` on the strip plus an explicit `height=76` on
+  each tile pins it at 76 at every scale either way (verified:
+  `hist_measure` in `%TEMP%\opencode`).
 - Written atomically (`.tmp` then rename). No BOM — never use PowerShell
   `Set-Content -Encoding UTF8` on it, PS 5.1 writes one and breaks the parser.
 - `read_config` defaults deliberately omit `history`/`daily`. Never filter a
@@ -637,11 +739,78 @@ once, on first run. Per-user throughout: no admin, no UAC, no second file.
   0–2, SetDescription 7, SetWorkingDirectory 9, SetIconLocation 17,
   **SetPath 20** — index 19 is `Resolve`, which answers S_OK and leaves
   the target empty, so the index was proven by reading the written `.lnk`
-  back through WScript.Shell, never from memory. IPersistFile's Save is 6
+  back through WScript.Shell, never from memory. The `icon` argument is
+  a **bare path**: `SetIconLocation` takes the index as its own argument,
+  so the old `path + ",0"` spelling stored a nonexistent file named
+  `Raze.exe,0` — the blank page the toast header and the link icons
+  showed. Every successful `Save` is followed by `_notify_shell`
+  (`SHChangeNotify` with `SHCNE_UPDATEITEM` + `SHCNF_PATHW`) so caches
+  holding the old icon drop it. IPersistFile's Save is 6
   after a QueryInterface for its IID. `make_shortcut.py` still uses
   pywin32 — which is not even installed on this machine, so it cannot run
   either; it is a dev script with hardcoded paths and never ships. The
   registry goes through stdlib `winreg`.
+- **The link also carries the toast's AUMID.** Windows draws a banner's
+  header name and tile by matching the toast's app id (the exe path,
+  `toast_app_id`) against `PKEY_AppUserModel_ID` on a Start Menu shortcut,
+  so `_create_shortcut` stamps the target path onto the link — the exact
+  string the toast reports — through `IPropertyStore::SetValue` +
+  `Commit` + `IPersistFile::Save`, called **after** the finally-block
+  releases everything, so the file is closed and the stamp owns its own
+  apartment. The numbers come from the SDK, not memory (no Windows SDK
+  headers exist on this machine): `PKEY_AppUserModel_ID` =
+  `{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}` pid 5 type `VT_LPWSTR`
+  (propkey.h), `IID_IPropertyStore` =
+  `{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}` and the vtable order
+  QI/AddRef/Release 0–2, GetCount 3, GetAt 4, GetValue 5,
+  **SetValue 6, Commit 7** (propsys.idl). Two traps: AutoTyper defines
+  `_GUID` twice (install ~672, toast ~1396), so `_aumid_key` moves the
+  fmtid as raw bytes — assigning a `_guid()` result into the struct field
+  raises the confusing "incompatible types, `_GUID` instance instead of
+  `_GUID` instance"; and the PROPVARIANT is deliberately never
+  `PropVariantClear`'d in the setter (Python owns that buffer — the store
+  copies it during SetValue) while the reader *does* clear the string the
+  store allocated. Everything is best effort: a link that refuses the
+  property still opens and uninstalls, only the header stays generic.
+  **Links that predate the fix** are stamped once at startup by
+  `repair_shortcuts()` — a worker thread from `_auto_install`'s
+  nothing-to-install branch, through the `_repair_shortcuts` method so
+  the selftest's probe can replace it; it reads each link first and
+  stamps only a disagreement (`aumid_needs_stamp`), so the steady state
+  writes nothing, and a failure on one link never stops the other. The
+  same call also writes the header's registry registration
+  (`register_aumid`, pure rule `aumid_registry_plan` — see *Toast*),
+  `do_install` writes it right after the uninstall entry so a first-ever
+  launch can already toast with an icon source, and `do_uninstall`
+  removes it (`_unregister_aumid`: delete the leaf, then prune each
+  parent only while it is empty, so another app's chain sharing the `C:`
+  prefix stops the walk and the AppUserModelId root is never touched).
+- **Start with Windows is a Run-key entry, through the same seam as
+  everything else the install writes.** `HKCU\...\CurrentVersion\Run`,
+  value `Raze`, carrying the target quoted (install paths have spaces).
+  Four functions sit beside `install_needed`: `startup_target()` picks
+  the installed copy, then the running file, then the path the next
+  install would write (so the answer is never empty, but whether it
+  exists is the caller's question — a missing target is a refusal);
+  `startup_plan(raw)` is the pure dict `key`/`name`/`command`/`enabled`;
+  `startup_value()` is the read-only read, best effort, answering `""`
+  for a missing key, an unopenable key and a non-string value alike,
+  because a failure must never let the box claim an entry the machine
+  does not have; and `set_startup(enabled, command, reg=None)` writes or
+  clears it, taking a **winreg seam** so the selftest drives a `_RunReg`
+  stub and never the real key. Enabling with nothing to launch refuses
+  silently. `_toggle_startup` then re-reads the key either way and puts
+  the box back with `select()`/`deselect()` — which do **not** fire the
+  checkbox command, so the revert cannot bounce back in (only
+  `toggle()` fires it, which is what the label's own bind uses). The
+  toggle lives in the **CONFIGURATION caption row**, right-aligned:
+  the card stack measures exactly `CONFIG_H` with no slack, so a new
+  row would clamp the Random line, while an 18 design px control on the
+  18 px caption adds no height at all. It goes straight into `head` as
+  a label plus checkbox — a `CTkFrame` would default to 200×200 and
+  blow the caption open, and both are **design px**, because CTk scales
+  `width`/`height`/`checkbox_*`/`corner_radius`/`border_width`
+  internally. `do_uninstall` clears the entry beside `_unregister_aumid`.
 - **The thread rule holds.** `do_install` runs on a worker thread (files
   and registry are not Tk work) and never touches Tk: it only sets
   `_install_done = (ok, err)`, and `_tick_inner` consumes it first thing —
@@ -652,14 +821,20 @@ once, on first run. Per-user throughout: no admin, no UAC, no second file.
   report through native `MessageBoxW` (`_native_info` / `_native_error`)
   because no Tk exists yet. `--uninstall` refuses with a visible box while
   `instance_running()` says a copy holds the mutex (OpenMutexW *probes*, it
-  never creates the mutex). Uninstall removes the registry key, both links
+  never creates the mutex). Uninstall removes the registry key, the Run
+  entry, both links
   and the installed copy — when the running file is the target, a detached
   `cmd` waits for this process to leave, then deletes — and **never
   `%APPDATA%\Raze`** (hard rule 1: deleting the program never deletes the
   user's data).
 - **A harness must never call `do_install`/`do_uninstall`** — they write
   to the tester's machine. `selftest`'s install section asserts on
-  `install_plan()` and `install_needed()` only (11 checks).
+  `install_plan()`, `install_needed()`, the AUMID stamp, the pure
+  header-registration plan and the startup entry (plan, target and a
+  write against a `_RunReg` stub — the real Run key is never a test
+  surface) only (36 checks); its `_auto_install` probe replaces both
+  `_install_now` and `_repair_shortcuts`, so no suite ever stamps the
+  tester's real links or writes the header registration.
 - The failure dialog keeps its message to one line ≤ ~52 characters:
   `textengine` has no newline handling, and a longer line would be
   ellipsized by the artwork — never cut a word mid-way in a dialog either.
@@ -784,7 +959,7 @@ being verified.
     `sys.stdout` with
     `errors="replace"`: the `∞` glyph cannot be encoded on a cp1252 console
     and one raised `print` breaks the `after()` chain, stalling the harness.
-  - `layout_check.py` — 31 checks. The window fits the work area's width and
+  - `layout_check.py` — 39 checks. The window fits the work area's width and
     height with its frame, the client area is the design at the clamped scale,
     the uptime sits on the status line between the tabs and the dot without
     crowding either and is the readable grey (MUTED), the loop counter reads
@@ -792,9 +967,17 @@ being verified.
     `F8`/`F6`/`F7`/`F9` and fit their
     frames, the hotkeys
     card still fits its tab at 348 px, every button's label sits on the fill it
-    is actually looking at (rest **and** hover), the Updates tab's rows fit
-    the panel with the shipped version heading them, and it captures
-    `typer.png` / `hotkeys.png` / `updates.png` for the eye to check.
+    is actually looking at (rest **and** hover), the History tab's two record
+    tiles exist and a forced record reaches its tile through `_refresh_records`
+    (the forced values never leave the process — `_save_config` is stubbed),
+    the Updates tab's rows fit
+    the panel with the shipped version heading them, and the update-done
+    badge: the dot hides on visit, the `UPDATED` banner's tag/colour/body
+    land, the banner sits above the rows, **every row body starts on the
+    same x**, and a later visit has no banner (badge states forced,
+    `_save_config` stubbed). It captures
+    `typer.png` / `hotkeys.png` / `history.png` / `updates_badge.png` / `updates.png`
+    for the eye to check.
   - `rpc_check.py` — 49 checks. The presence protocol end to end: handshake,
     all three activity shapes, the repo button, the timer that runs from app
     start through every status — paused and idle included — and never moves,
