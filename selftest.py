@@ -921,12 +921,47 @@ def run():
             sorted(only) == ["best_sitting_msgs", "best_sitting_s"],
             str(sorted(only)))
 
-        # the pool's own key: absent means the user has never had one,
-        # which is what lets a stored [] come back emptied - read_config
-        # no longer fills the key in
+        # the message pools.  A config from before pools keeps its one
+        # pool, a fresh one gets the samples, and an emptied pool stays
+        # emptied: absent and empty are two different answers, which is
+        # why read_config no longer fills the key in
         failures += not _check(
             "a fresh config carries no messages key",
             "messages" not in fresh, str(fresh.get("messages")))
+        profiles, active = A.profiles_plan(fresh)
+        failures += not _check(
+            "a fresh config gets the sample pool",
+            profiles == {"Default": A.SAMPLE_MESSAGES}
+            and active == "Default", str((profiles, active)))
+        profiles, active = A.profiles_plan({"messages": ["kept"]})
+        failures += not _check(
+            "a pre-profiles config becomes one pool",
+            profiles == {"Default": ["kept"]} and active == "Default",
+            str((profiles, active)))
+        profiles, active = A.profiles_plan({"messages": []})
+        failures += not _check(
+            "an emptied pool comes back emptied",
+            profiles == {"Default": []} and active == "Default",
+            str((profiles, active)))
+        profiles, active = A.profiles_plan(
+            {"profiles": {"A": ["x"], "B": ["y", "z"]},
+             "active_profile": "B"})
+        failures += not _check(
+            "stored pools and the active one are honoured",
+            profiles == {"A": ["x"], "B": ["y", "z"]}
+            and active == "B", str((profiles, active)))
+        profiles, active = A.profiles_plan(
+            {"profiles": {"A": ["x"]}, "active_profile": "gone"})
+        failures += not _check(
+            "an active name that matches nothing falls back",
+            profiles == {"A": ["x"]} and active == "A",
+            str((profiles, active)))
+        profiles, active = A.profiles_plan(
+            {"profiles": {"": ["junk"], "B": "not a list"}})
+        failures += not _check(
+            "junk pools fall all the way back to the samples",
+            profiles == {"Default": A.SAMPLE_MESSAGES}
+            and active == "Default", str((profiles, active)))
 
         # the heartbeat's write gate: an edit is on disk within a couple
         # of seconds, history within a minute - and the write itself

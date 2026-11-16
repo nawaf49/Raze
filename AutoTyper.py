@@ -434,9 +434,46 @@ def record_plan(cfg, sent, secs):
                                   _as_count(secs))}
 
 
-# what a first-ever run finds in the pool - handed out to a config that
-# has never carried one, by the load path in _apply_config
+# what a first-ever run finds in the pool - handed out once, by
+# profiles_plan, to a config that has never carried one
 SAMPLE_MESSAGES = ["Hello there!", "How can I help you?", "Have a great day!"]
+
+
+def profiles_plan(cfg):
+    """The stored message pools and which one is open.  Pure.
+
+    Reads `cfg`, writes nothing.  Three shapes have to survive the trip:
+    a config from before pools (its `messages` becomes the one pool), a
+    config that carries pools already (its active name is honoured, or
+    the first pool when that name is gone), and a fresh config (the
+    sample messages as one pool).  Junk anywhere - a pool that is not a
+    list, an empty name, an active name matching nothing - falls back to
+    the first pool rather than to nothing, and an emptied pool stays
+    emptied: `messages` absent means never had one, `messages` empty
+    means the user cleared it.
+    """
+    profiles = {}
+    stored = cfg.get("profiles")
+    if isinstance(stored, dict):
+        for name, msgs in stored.items():
+            name = str(name).strip()
+            if not name or not isinstance(msgs, list):
+                continue
+            profiles[name] = [str(m) for m in msgs]
+    if not profiles:
+        base = cfg.get("messages")
+        if base is None:
+            base = SAMPLE_MESSAGES
+        elif isinstance(base, str):
+            base = [base]
+        elif not isinstance(base, list):
+            base = []
+        profiles["Default"] = [str(m) for m in base]
+    active = cfg.get("active_profile")
+    active = str(active) if active is not None else None
+    if active not in profiles:
+        active = next(iter(profiles))
+    return profiles, active
 
 
 def pretty_day(day):
@@ -4383,6 +4420,26 @@ class AutoTyper:
         except Exception:
             pass
 
+        # the pools themselves: one name per pool, switched in place.  The
+        # row sits between the editor and the file pills, so the head keeps
+        # its caption and counter exactly as they were.  Design px
+        # throughout - CTk scales width/height/corner_radius itself
+        prow = ctk.CTkFrame(card, fg_color="transparent")
+        prow.pack(fill="x", padx=24, pady=(14, 0))
+        self.profile_menu = ctk.CTkOptionMenu(
+            prow, values=["Default"], command=self._switch_profile,
+            width=170, height=30, corner_radius=8, anchor="w",
+            dynamic_resizing=False,
+            fg_color=SURFACE_2, button_color=BORDER_2,
+            button_hover_color="#3d3d46", text_color=TEXT,
+            dropdown_fg_color=SURFACE_2, dropdown_hover_color="#1d1d22",
+            dropdown_text_color=TEXT, font=(FONT_SB, -11))
+        self.profile_menu.pack(side="left")
+        Pill(prow, "New", self._new_profile, kind="glass", height=30,
+             font=(FONT_SB, -11)).pack(side="left", padx=(8, 0))
+        Pill(prow, "Delete", self._delete_profile, kind="danger", height=30,
+             font=(FONT_SB, -11)).pack(side="left", padx=(6, 0))
+
         row = ctk.CTkFrame(card, fg_color="transparent")
         row.pack(fill="x", padx=24, pady=18)
         for i in range(4):
@@ -4769,17 +4826,17 @@ class AutoTyper:
             for stamp, _message in self.history:
                 day = stamp[:10]
                 self.daily[day] = self.daily.get(day, 0) + 1
-        # absent means the user has never had a pool (the samples apply);
-        # a stored [] means a pool the user emptied, which comes back
-        # empty.  Filling the key in would make those one answer, which
-        # is what used to resurrect the samples after a Clear
-        msgs = c.get("messages")
-        if msgs is None:
-            msgs = SAMPLE_MESSAGES
-        elif not isinstance(msgs, list):
-            msgs = []
-        self.editor.insert("1.0", "\n".join(str(m) for m in msgs))
+        # the pools and which one is open; the editor shows the active
+        # one, and _save_config writes every pool back with this one's
+        # contents refreshed from the editor.  An emptied pool stays
+        # emptied - only a config that never carried one gets the samples
+        self.profiles, self.active_profile = profiles_plan(c)
+        self.editor.insert("1.0", "\n".join(self.profiles[self.active_profile]))
         self._update_pool_meta()
+        menu = getattr(self, "profile_menu", None)
+        if menu is not None:
+            menu.configure(values=list(self.profiles))
+            menu.set(self.active_profile)
         self.install_asked = bool(c.get("install_asked"))
         # The badge on the Updates tab: has the running version's list been
         # opened?  A config written before the key existed answers "no" -
@@ -4823,6 +4880,16 @@ class AutoTyper:
 
     def _save_config(self):
         self._commit_fields()
+        # every pool, with the open one refreshed from the editor - the
+        # editor is only ever showing the active pool, so the stored copy
+        # of that one would go stale otherwise.  `messages` keeps carrying
+        # the active pool too: it is what a config from before pools reads,
+        # and what a hand-edit that drops the newer keys falls back to
+        profiles = dict(getattr(self, "profiles", None) or {})
+        active = str(getattr(self, "active_profile", None) or "Default")
+        profiles[active] = self._collect_messages()
+        self.profiles = profiles
+        self.active_profile = active
         self.cfg.update({
             "msg_interval": self.nf_interval.get(),
             "loop": self.nf_loop.get(),
@@ -4830,7 +4897,9 @@ class AutoTyper:
             "stop_key": self.stop_key,
             "pause_key": self.pause_key,
             "resume_key": self.resume_key,
-            "messages": self._collect_messages(),
+            "messages": profiles[active],
+            "profiles": profiles,
+            "active_profile": active,
             "random": self._random_pick,
             "history": [{"t": t, "m": m} for t, m in self.history[-HISTORY_KEEP:]],
             "daily": self.daily,
@@ -5242,6 +5311,68 @@ class AutoTyper:
                          confirm_text="Clear", kind="danger"):
             self.editor.delete("1.0", END)
             self._update_pool_meta()
+
+    # ----- profiles ------------------------------------------------------ #
+    def _switch_profile(self, name):
+        """Open another pool: what is on screen is stored under its name
+        first, so nothing is lost between one pool and the next."""
+        if name == self.active_profile or name not in self.profiles:
+            return
+        self.profiles[self.active_profile] = self._collect_messages()
+        self.active_profile = name
+        self.editor.delete("1.0", END)
+        self.editor.insert("1.0", "\n".join(self.profiles[name]))
+        # stores the new pool as the open one, refreshes the counter and
+        # marks the config dirty for the heartbeat - one call, as for any
+        # other pool edit
+        self._update_pool_meta()
+        try:
+            self.profile_menu.set(name)
+        except Exception:
+            pass
+
+    def _new_profile(self):
+        """A fresh, empty pool under the first free `Profile N` name."""
+        self.profiles[self.active_profile] = self._collect_messages()
+        n = 1
+        while "Profile %d" % n in self.profiles:
+            n += 1
+        name = "Profile %d" % n
+        self.profiles[name] = []
+        self.active_profile = name
+        self.editor.delete("1.0", END)
+        self._update_pool_meta()
+        try:
+            self.profile_menu.configure(values=list(self.profiles))
+            self.profile_menu.set(name)
+        except Exception:
+            pass
+
+    def _delete_profile(self):
+        """Drop the pool on screen - after saying so.  One pool must
+        always remain, because the typing thread needs a pool to read."""
+        if len(self.profiles) < 2:
+            messagebox.showinfo("One pool left",
+                                "Raze needs at least one message pool.",
+                                parent=self.root)
+            return
+        name = self.active_profile
+        if not self._confirm("Delete pool",
+                             "Remove %s and everything in it?" % name[:20],
+                             confirm_text="Delete", kind="danger"):
+            return
+        del self.profiles[name]
+        if self.active_profile not in self.profiles:
+            self.active_profile = next(iter(self.profiles))
+            self.editor.delete("1.0", END)
+            self.editor.insert(
+                "1.0", "\n".join(self.profiles[self.active_profile]))
+        self._update_pool_meta()
+        try:
+            self.profile_menu.configure(values=list(self.profiles))
+            self.profile_menu.set(self.active_profile)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     #  Hotkey
