@@ -1020,6 +1020,74 @@ def run():
             not fold._config_dirty and fold.seeded == 1,
             str((fold._config_dirty, fold.seeded)))
 
+        # the stat fields' signature: signed on the way out, verified on
+        # the way in, and reset - only those six - when the file is edited
+        # around it
+        signed = {"history": [{"t": "2026-11-01 10:00:00", "m": "hi"}],
+                  "daily": {"2026-11-01": 1},
+                  "best_sitting_msgs": 7, "best_sitting_s": 60,
+                  "best_sitting_msgs_day": "2026-11-01",
+                  "best_sitting_s_day": "2026-11-01"}
+        sig = A.stats_sign(signed)
+        failures += not _check(
+            "a signature is a stable 64 character digest",
+            isinstance(sig, str) and len(sig) == 64
+            and sig == A.stats_sign(dict(signed)), repr(sig))
+        A.write_config({**signed, "stats_sig": sig, "loop": 4}, cfg)
+        data = A.read_config(cfg)
+        failures += not _check(
+            "a signed config reads its stats back untouched",
+            data.get("best_sitting_msgs") == 7
+            and data.get("history") == signed["history"]
+            and data.get("stats_sig") == sig
+            and data.get("loop") == 4, str(data))
+        forged = dict(signed)
+        forged["best_sitting_msgs"] = 9999
+        forged["history"] = [{"t": "2026-11-01 10:00:00", "m": "forged"}]
+        A.write_config({**forged, "stats_sig": sig, "loop": 4,
+                        "msg_interval": 9}, cfg)
+        data = A.read_config(cfg)
+        failures += not _check(
+            "an edited stat resets every stat, and only those",
+            data.get("best_sitting_msgs") == 0
+            and data.get("best_sitting_s") == 0
+            and data.get("history") == []
+            and data.get("daily") == {}
+            and data.get("best_sitting_msgs_day") == ""
+            and data.get("best_sitting_s_day") == ""
+            and "stats_sig" not in data, str(data))
+        failures += not _check(
+            "the rest of an edited config is left alone",
+            data.get("loop") == 4 and data.get("msg_interval") == 9,
+            str((data.get("loop"), data.get("msg_interval"))))
+        A.write_config({"loop": 4, "best_sitting_msgs": 42,
+                        "history": signed["history"]}, cfg)
+        data = A.read_config(cfg)
+        failures += not _check(
+            "an unsigned config keeps its stats until the next save",
+            data.get("best_sitting_msgs") == 42
+            and data.get("history") == signed["history"]
+            and "stats_sig" not in data, str(data))
+
+        # and junk in the stat fields must never reach _apply_config's
+        # comprehension: an int has no .get, and a string yields chars
+        A.write_config({"history": "not a list", "daily": [1, 2]}, cfg)
+        data = A.read_config(cfg)
+        failures += not _check(
+            "a junk log and junk day counts read as empty, not a crash",
+            data.get("history") == [] and data.get("daily") == {},
+            str((data.get("history"), data.get("daily"))))
+        A.write_config({"history": [1, {"t": 5, "m": None},
+                                    {"m": "no stamp"}],
+                        "daily": {"2026-11-01": "12", "junk": -3}}, cfg)
+        data = A.read_config(cfg)
+        failures += not _check(
+            "log entries and day counts are coerced to their shape",
+            data.get("history") == [{"t": "", "m": ""},
+                                    {"t": "", "m": "no stamp"}]
+            and data.get("daily") == {"2026-11-01": 12, "junk": 0},
+            str(data))
+
         # the message pools.  A config from before pools keeps its one
         # pool, a fresh one gets the samples, and an emptied pool stays
         # emptied: absent and empty are two different answers, which is

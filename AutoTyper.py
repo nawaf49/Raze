@@ -12,6 +12,8 @@ is DPI aware and CustomTkinter scaling is disabled -> 1:1 pixels, razor sharp.
 """
 
 import ctypes
+import hashlib
+import hmac
 import json
 import math
 import os
@@ -383,6 +385,10 @@ def read_config(path=None):
         pass                     # first run - the defaults simply apply
     except Exception:
         _preserve_unreadable(target)
+    # the six stat fields: verified against their signature (or adopted,
+    # if this config predates it) and then hardened to shapes
+    # `_apply_config` can unpack - in that order, see _check_stats
+    _check_stats(defaults)
     return defaults
 
 
@@ -398,6 +404,141 @@ def _preserve_unreadable(target):
             dst.write(src.read())
     except Exception:
         pass
+
+
+# The six fields a record forgery would touch: the recent log, the per
+# day counts behind the History list and the Discord presence total, and
+# the two personal bests with the day each was set.  They travel under
+# one signature because they are one story - half of it being forged
+# makes all of it untrustworthy - while everything else in the file
+# (interval, pool, keys, profile names) stays the user's own to edit by
+# hand, the way it always was.
+STATS_KEYS = ("history", "daily", "best_sitting_msgs", "best_sitting_s",
+              "best_sitting_msgs_day", "best_sitting_s_day")
+
+
+def stats_key():
+    """The HMAC key the stat fields are signed with - derived, never stored.
+
+    Holding the key beside the data would defend nothing: whoever can
+    edit the config can edit the key too.  It is derived instead from
+    what is awkward to guess - a salt baked into the program, the account
+    name, the machine's own GUID - and every ingredient is best effort: a
+    failure to read one only narrows the key and never raises, because a
+    config load must not be able to die over a signature.  This stops the
+    casual edit the feature exists for (open the file, raise a number,
+    save).  It is not, and cannot be, a defence against someone determined
+    enough to take the exe apart for the salt: the program has to be able
+    to verify its own data, so the material is in there somewhere.  An
+    honest limit, kept local on purpose.
+    """
+    parts = ["raze.stats.v1"]
+    try:
+        parts.append(str(os.environ.get("USERNAME", "")))
+    except Exception:
+        pass
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SOFTWARE\Microsoft\Cryptography") as key:
+            guid, _kind = winreg.QueryValueEx(key, "MachineGuid")
+        parts.append(str(guid))
+    except Exception:
+        pass
+    return hashlib.sha256("|".join(parts).encode("utf-8")).digest()
+
+
+def stats_sign(cfg):
+    """The signature over `cfg`'s six stat fields.  Pure.
+
+    The bytes are a canonical JSON rendering - sorted keys, no spaces,
+    ASCII escapes - so the same six values always sign the same way no
+    matter how the dictionary was built, and a message with an accent in
+    it signs as its escapes rather than as its bytes.  Never raises: the
+    key derivation swallows its own failures and the values came out of
+    `json.load`, so they are always serialisable.
+    """
+    payload = {key: cfg.get(key) for key in STATS_KEYS}
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True)
+    return hmac.new(stats_key(), blob.encode("utf-8"),
+                    hashlib.sha256).hexdigest()
+
+
+def _clean_history(value):
+    """The stored log as a list of `{"t", "m"}` string pairs, or nothing.
+
+    A file edited by hand can carry the key as a string, a number or a
+    list of anything at all, and `_apply_config` reads every entry with
+    `.get` - an integer has none, and iterating a string yields
+    characters - so junk has to read as an empty log rather than as a
+    crash the user would have to recover from by deleting the file.
+    """
+    if not isinstance(value, list):
+        return []
+    out = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        stamp = entry.get("t", "")
+        message = entry.get("m", "")
+        out.append({"t": stamp if isinstance(stamp, str) else "",
+                    "m": message if isinstance(message, str) else ""})
+    return out
+
+
+def _clean_daily(value):
+    """The per-day counters as `{day: non-negative int}`, or nothing.
+
+    The counts feed `+ 1` arithmetic and a f-string on the History rows,
+    so a string or a negative in the file must clamp before either sees
+    it; the keys are already strings (JSON object keys never are not),
+    and `str()` is there for a dictionary built in memory by hand.
+    """
+    if not isinstance(value, dict):
+        return {}
+    return {str(day): _as_count(count) for day, count in value.items()}
+
+
+def _check_stats(cfg):
+    """Verify the stat fields against their signature, then harden them.
+
+    Order matters.  The signature is checked against the file as it
+    arrived first - the app signed exactly what it wrote, so any
+    difference at all is an outside edit - and only then are the shapes
+    hardened, because a valid signature already means the shapes are the
+    app's own.
+
+    A config with no signature is an older build's (or a fresh one): its
+    stats stand as they are and the next save signs them, which is the
+    one-time adoption.  A signature that does not recompute resets the
+    six fields together and drops the stale one, so the file comes back
+    as one this build would have written; the rest of the config is
+    untouched - interval, pool, keys and profile names are the user's
+    own to edit, and nothing here gates on them.
+    """
+    if "stats_sig" in cfg:
+        try:
+            good = (isinstance(cfg.get("stats_sig"), str)
+                    and hmac.compare_digest(cfg["stats_sig"],
+                                            stats_sign(cfg)))
+        except Exception:
+            good = False
+        if not good:
+            cfg["history"] = []
+            cfg["daily"] = {}
+            cfg["best_sitting_msgs"] = 0
+            cfg["best_sitting_s"] = 0
+            cfg["best_sitting_msgs_day"] = ""
+            cfg["best_sitting_s_day"] = ""
+            cfg.pop("stats_sig", None)
+    # the shapes are hardened either way: an adopted config can carry a
+    # log from any build, and one whose signature just failed has been
+    # emptied but still has to come back in the right shape
+    if "history" in cfg:
+        cfg["history"] = _clean_history(cfg.get("history"))
+    if "daily" in cfg:
+        cfg["daily"] = _clean_daily(cfg.get("daily"))
 
 
 def group_history(history):
@@ -5090,6 +5231,14 @@ class AutoTyper:
                 getattr(self, "best_sitting_msgs_day", ""),
             "best_sitting_s_day": getattr(self, "best_sitting_s_day", ""),
         })
+        # the six stat fields go out under one signature, recomputed from
+        # the values just assembled - see stats_sign.  One that cannot be
+        # produced leaves the key out rather than keeping a stale one:
+        # unsigned is adopted on the next load, mis-signed resets stats.
+        try:
+            self.cfg["stats_sig"] = stats_sign(self.cfg)
+        except Exception:
+            self.cfg.pop("stats_sig", None)
         try:
             write_config(self.cfg)
         except Exception:
