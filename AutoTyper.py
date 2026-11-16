@@ -361,11 +361,13 @@ def read_config(path=None):
         # sample messages apply) while a stored [] means a pool the user
         # emptied, which must come back empty.  Filling the key in would
         # make those two indistinguishable and resurrect the samples.
-        # The two personal bests the History tab shows.  They default to
-        # 0 rather than being absent so a fresh config always has them,
-        # but a config that carries them keeps them: nothing here ever
-        # filters a file down to the keys this build knows about.
+        # The two personal bests the History tab shows, and the day each
+        # was set.  They default to 0 / "" rather than being absent so a
+        # fresh config always has them, but a config that carries them
+        # keeps them: nothing here ever filters a file down to the keys
+        # this build knows about.
         "best_sitting_msgs": 0, "best_sitting_s": 0,
+        "best_sitting_msgs_day": "", "best_sitting_s_day": "",
     }
     target = path or config_path()
     try:
@@ -407,6 +409,49 @@ def group_history(history):
     return days
 
 
+def history_runs(history, gap_s):
+    """The finished runs hiding in the recent log -> [(count, secs, day)].
+
+    The log stores one timestamp per message and nothing else, so a run
+    is a stretch of entries following each other closely: anything
+    further apart than `gap_s` seconds is a different sitting.  The
+    caller cuts `gap_s` from the live interval (four intervals of
+    slack, floored at five minutes), so jitter inside a run never
+    splits it while two sittings either side of a break do.
+
+    Unparseable stamps are dropped - a file edited by hand must not be
+    able to raise here - and the entries are sorted first: the log is
+    written chronologically, but a hand-edited file may not be, and a
+    run's identity is the timestamps' own order.  A run's day is the
+    day it began.  The log is capped at HISTORY_KEEP entries, so this
+    is a floor rather than a rewrite: a live session still records its
+    exact numbers through `_record_session`.
+    """
+    times = []
+    for entry in history or ():
+        try:
+            stamp = entry[0]
+            times.append(datetime.strptime(str(stamp), "%Y-%m-%d %H:%M:%S"))
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
+    times.sort()
+    runs = []
+    start = prev = None
+    count = 0
+    for moment in times:
+        if start is None or (moment - prev).total_seconds() > gap_s:
+            if start is not None:
+                runs.append((count, int((prev - start).total_seconds()),
+                             start.strftime("%Y-%m-%d")))
+            start, count = moment, 0
+        count += 1
+        prev = moment
+    if start is not None:
+        runs.append((count, int((prev - start).total_seconds()),
+                     start.strftime("%Y-%m-%d")))
+    return runs
+
+
 def _as_count(value):
     """A stored counter as a non-negative int, whatever it arrived as.
 
@@ -419,20 +464,49 @@ def _as_count(value):
         return 0
 
 
-def record_plan(cfg, sent, secs):
-    """The two personal bests one finished sitting leaves behind.
+def _as_day(value):
+    """A stored record day as a plain string, whatever it arrived as.
+
+    The day keys are only ever written as `YYYY-MM-DD`; anything else
+    in the file is a hand-edit and reads as "no day known" rather than
+    reaching the tiles.
+    """
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+def record_plan(cfg, candidates):
+    """The two personal bests - and the day each was set - a fold leaves.
 
     Pure, like every other plan here: `cfg` is read and never written,
-    and only the two keys this feature owns come back - every other key
+    and only the four keys this feature owns come back - every other key
     in it is the caller's to carry, so a record can never be the reason
-    something else drops out of the file.  A record only ever moves up,
-    junk clamps to 0, and `secs` counts whole seconds the way the
-    session clock does.
+    something else drops out of the file.  `candidates` is a list of
+    `(sent, secs, day)` triples: a finished session brings itself, the
+    load-time backfill brings every run the stored log still holds, and
+    each is folded in turn.  A record only ever moves up, and only a
+    strict improvement rewrites the day beside it; junk clamps to 0,
+    and `secs` counts whole seconds the way the session clock does.
     """
-    return {"best_sitting_msgs": max(_as_count(cfg.get("best_sitting_msgs")),
-                                     _as_count(sent)),
-            "best_sitting_s": max(_as_count(cfg.get("best_sitting_s")),
-                                  _as_count(secs))}
+    msgs = _as_count(cfg.get("best_sitting_msgs"))
+    secs = _as_count(cfg.get("best_sitting_s"))
+    msgs_day = _as_day(cfg.get("best_sitting_msgs_day"))
+    secs_day = _as_day(cfg.get("best_sitting_s_day"))
+    for candidate in candidates or ():
+        try:
+            sent, span, day = candidate
+        except (TypeError, ValueError):
+            continue
+        if _as_count(sent) > msgs:
+            msgs = _as_count(sent)
+            msgs_day = _as_day(day)
+        if _as_count(span) > secs:
+            secs = _as_count(span)
+            secs_day = _as_day(day)
+    return {"best_sitting_msgs": msgs, "best_sitting_s": secs,
+            "best_sitting_msgs_day": msgs_day,
+            "best_sitting_s_day": secs_day}
 
 
 # what a first-ever run finds in the pool - handed out once, by
@@ -484,6 +558,24 @@ def pretty_day(day):
         return f"{dt.strftime('%B')} {dt.day} {dt.strftime('%A')}, {dt.year}"
     except ValueError:
         return day
+
+
+def record_day_text(day):
+    """'2026-11-16' -> 'Nov 16, 2026'; anything unreadable -> ''.
+
+    The History tiles show this beside a record, so unlike `pretty_day`
+    it never echoes its input back: junk in the file reads as "no day
+    known" and leaves the space blank.  Built by hand because `%-d`
+    (the no-zero-pad form) is a C runtime extension Windows' sprintf
+    does not have.
+    """
+    try:
+        dt = datetime.strptime(str(day).strip()[:10], "%Y-%m-%d")
+    except ValueError:
+        return ""
+    month = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[dt.month - 1]
+    return f"{month} {dt.day}, {dt.year}"
 
 
 def _ensure_folder_name(folder: str) -> None:
@@ -3040,21 +3132,33 @@ class StatTile(ctk.CTkFrame):
     VALUE_SIZE = 21
     VALUE_WEIGHT = "SemiBold"
 
-    def __init__(self, master, caption, width=None, worst=None, **kwargs):
+    def __init__(self, master, caption, width=None, worst=None, date=None,
+                 **kwargs):
         super().__init__(master, fg_color=SURFACE_2, corner_radius=14,
                          border_width=1, border_color=BORDER, **kwargs)
         self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)      # the day, right aligned
         self.grid_rowconfigure(0, weight=1)      # top spacer
         self.grid_rowconfigure(3, weight=1)      # bottom spacer
         cap = BakedLabel(self, caption, size=9, weight="SemiBold", color=FAINT,
                          tracking=1.1, height=14, anchor="w")
         cap.grid(row=1, column=0, sticky="w", padx=self.PAD)
+        # The day a record was set, on the caption's own line at the far
+        # right.  A tile with no day to show holds one baked space rather
+        # than an empty string - an empty render has no artwork to measure
+        # and no box to stand in.  It reads as MUTED because it is meant
+        # to be read, where the caption above it is FAINT.
+        self.date = BakedLabel(self, date or " ", size=9, weight="Regular",
+                               color=MUTED, tracking=0.4, height=14,
+                               anchor="e")
+        self.date.grid(row=1, column=1, sticky="e", padx=(0, self.PAD))
         # the tile has a fixed width, so a counter going from 9 to 10 cannot
         # move a single pixel - the value stays left aligned under its caption
         self.value = BakedLabel(self, "0", size=self.VALUE_SIZE,
                                 weight=self.VALUE_WEIGHT, color=TEXT,
                                 anchor="w", height=28, fit=True)
-        self.value.grid(row=2, column=0, sticky="w", padx=self.PAD, pady=(2, 0))
+        self.value.grid(row=2, column=0, columnspan=2, sticky="w",
+                        padx=self.PAD, pady=(2, 0))
         if width:
             # The caption is already rendered, so the room it needs is known
             # exactly for *this* scale.  Its design width grows below ~60%
@@ -3063,9 +3167,15 @@ class StatTile(ctk.CTkFrame):
             # wider of the design width and what this scale's artwork needs.
             # `worst` - the longest string the counter can ever print - is
             # measured the same way, so a value is never squeezed by its own
-            # caption's box.  It is computed once, at build time: a running
-            # counter still cannot move it.
-            room = max(width, cap.winfo_reqwidth() / S + 2 * self.PAD + 2)
+            # caption's box.  A date is only counted when the tile was
+            # built with one: the session counters never show a day, and
+            # their width must not move for a space they will not fill.
+            # It is computed once, at build time: a running counter still
+            # cannot move it.
+            need = cap.winfo_reqwidth()
+            if date:
+                need += self.date.winfo_reqwidth() + 6
+            room = max(width, need / S + 2 * self.PAD + 2)
             if worst:
                 room = max(room, self._worst_room(worst))
             self.configure(width=room)
@@ -3093,6 +3203,10 @@ class StatTile(ctk.CTkFrame):
         self.value.set_text(text)
         if color:
             self.value.set_color(color)
+
+    def set_date(self, text):
+        """The day a record was set - blank until there is one to show."""
+        self.date.set_text(text or " ")
 
 
 # --------------------------------------------------------------------------- #
@@ -4070,14 +4184,22 @@ class AutoTyper:
         strip.grid_columnconfigure(0, weight=1)
         strip.grid_columnconfigure(1, weight=1)
         strip.grid_rowconfigure(0, weight=1)
-        self.tile_best_msgs = StatTile(strip, "MOST IN ONE SITTING",
+        self.tile_best_msgs = StatTile(strip, "MOST IN ONE RUN",
                                        width=160, height=76,
-                                       worst="999999999")
+                                       worst="999999999",
+                                       date=record_day_text(
+                                           getattr(self,
+                                                   "best_sitting_msgs_day",
+                                                   "")))
         self.tile_best_msgs.grid(row=0, column=0, sticky="nsew",
                                  padx=(0, 7))
-        self.tile_best_time = StatTile(strip, "LONGEST SITTING",
+        self.tile_best_time = StatTile(strip, "LONGEST UPTIME",
                                        width=140, height=76,
-                                       worst="999y 364d")
+                                       worst="999y 364d",
+                                       date=record_day_text(
+                                           getattr(self,
+                                                   "best_sitting_s_day",
+                                                   "")))
         self.tile_best_time.grid(row=0, column=1, sticky="nsew",
                                  padx=(7, 0))
         self._refresh_records()
@@ -4223,7 +4345,7 @@ class AutoTyper:
         self.root.after_idle(self._render_history)
 
     def _refresh_records(self):
-        """Put the current bests on the History tiles.
+        """Put the current bests - and the day each was set - on the tiles.
 
         The tab is built lazily, so this is called from `_record_session`
         long before the tiles exist as often as after - a missing tile is
@@ -4237,6 +4359,10 @@ class AutoTyper:
         try:
             msgs.set(str(getattr(self, "best_sitting_msgs", 0)))
             clock.set(_elapsed_text(getattr(self, "best_sitting_s", 0)))
+            msgs.set_date(record_day_text(
+                getattr(self, "best_sitting_msgs_day", "")))
+            clock.set_date(record_day_text(
+                getattr(self, "best_sitting_s_day", "")))
         except Exception:
             pass
 
@@ -4853,15 +4979,67 @@ class AutoTyper:
 
         # the personal bests the History tab shows - a config from before
         # they existed answers 0, which is the honest answer for someone
-        # who has not set one yet
+        # who has not set one yet.  The day each was set travels beside
+        # it; anything that is not a string in the file reads as "no day
+        # known" rather than reaching the tiles.
         self.best_sitting_msgs = _as_count(c.get("best_sitting_msgs"))
         self.best_sitting_s = _as_count(c.get("best_sitting_s"))
+        self.best_sitting_msgs_day = _as_day(c.get("best_sitting_msgs_day"))
+        self.best_sitting_s_day = _as_day(c.get("best_sitting_s_day"))
 
         # Loading is not editing: every setter above ran through the dirty
         # flag, and the insert's own <<Modified>> may be queued behind this
         # - so the flag is dropped here, and anything that marks it after
         # this point is the user's first real edit
         self._config_dirty = False
+
+        # ...except the backfill, which runs after the clear on purpose:
+        # the stored log already holds every run it can see, and a record
+        # it improves has to reach the disk like any other edit.  A fold
+        # that changes nothing leaves the flag alone, so an ordinary load
+        # never writes a file it did not need to.
+        self._backfill_records()
+
+    def _backfill_records(self):
+        """Fold the stored log into the personal bests, once at load.
+
+        The records used to be written only by a session that ended while
+        the app was open, so a config from before they existed read 0
+        forever while the log beside it held every run - which is the
+        "I have history but the tiles say zero" the backfill exists for.
+        The log is capped at HISTORY_KEEP entries, so what comes out of
+        it is a floor: `_record_session` still records a live session's
+        exact numbers, and a fold only ever moves a record up.  Best
+        effort throughout - a junk log must never stop the app from
+        loading.
+        """
+        try:
+            try:
+                interval = float(getattr(self, "msg_interval", 2) or 2)
+            except (TypeError, ValueError):
+                interval = 2.0
+            runs = history_runs(getattr(self, "history", None),
+                                max(300.0, 4.0 * interval))
+            if not runs:
+                return
+            plan = record_plan(self.cfg, runs)
+            now = (getattr(self, "best_sitting_msgs", 0),
+                   getattr(self, "best_sitting_s", 0),
+                   getattr(self, "best_sitting_msgs_day", ""),
+                   getattr(self, "best_sitting_s_day", ""))
+            if (plan["best_sitting_msgs"], plan["best_sitting_s"],
+                    plan["best_sitting_msgs_day"],
+                    plan["best_sitting_s_day"]) == now:
+                return                      # the log knows no more than we do
+            self.best_sitting_msgs = plan["best_sitting_msgs"]
+            self.best_sitting_s = plan["best_sitting_s"]
+            self.best_sitting_msgs_day = plan["best_sitting_msgs_day"]
+            self.best_sitting_s_day = plan["best_sitting_s_day"]
+            self.cfg.update(plan)
+            self._config_dirty = True       # the fold has to reach the disk
+            self._refresh_records()
+        except Exception:
+            pass
 
     def _commit_fields(self):
         """Read what is on screen, not what was there before the user typed.
@@ -4908,6 +5086,9 @@ class AutoTyper:
             "seen_version": self.seen_version,
             "best_sitting_msgs": getattr(self, "best_sitting_msgs", 0),
             "best_sitting_s": getattr(self, "best_sitting_s", 0),
+            "best_sitting_msgs_day":
+                getattr(self, "best_sitting_msgs_day", ""),
+            "best_sitting_s_day": getattr(self, "best_sitting_s_day", ""),
         })
         try:
             write_config(self.cfg)
@@ -5722,15 +5903,22 @@ class AutoTyper:
         """
         try:
             stats = getattr(self, "stats", None) or {}
-            plan = record_plan(self.cfg, stats.get("sent"),
-                               stats.get("elapsed"))
+            today = datetime.now().strftime("%Y-%m-%d")
+            plan = record_plan(self.cfg, [(stats.get("sent"),
+                                           stats.get("elapsed"), today)])
             if (plan["best_sitting_msgs"]
                     == getattr(self, "best_sitting_msgs", 0)
                     and plan["best_sitting_s"]
-                    == getattr(self, "best_sitting_s", 0)):
+                    == getattr(self, "best_sitting_s", 0)
+                    and plan["best_sitting_msgs_day"]
+                    == getattr(self, "best_sitting_msgs_day", "")
+                    and plan["best_sitting_s_day"]
+                    == getattr(self, "best_sitting_s_day", "")):
                 return                      # nothing beat anything
             self.best_sitting_msgs = plan["best_sitting_msgs"]
             self.best_sitting_s = plan["best_sitting_s"]
+            self.best_sitting_msgs_day = plan["best_sitting_msgs_day"]
+            self.best_sitting_s_day = plan["best_sitting_s_day"]
             self.cfg.update(plan)
             self._save_config()
             self._refresh_records()

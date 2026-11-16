@@ -883,43 +883,142 @@ def run():
 
         # the personal bests the History tab shows: they arrive through
         # the defaults, they survive a file that already carries them,
-        # and the plan that folds one sitting into them is pure
+        # and the plan that folds runs into them is pure
         fresh = A.read_config(os.path.join(tmp, "no-such-file.json"))
         failures += not _check(
-            "a fresh config carries both record keys",
+            "a fresh config carries every record key",
             fresh.get("best_sitting_msgs") == 0
-            and fresh.get("best_sitting_s") == 0,
+            and fresh.get("best_sitting_s") == 0
+            and fresh.get("best_sitting_msgs_day") == ""
+            and fresh.get("best_sitting_s_day") == "",
             str((fresh.get("best_sitting_msgs"),
-                 fresh.get("best_sitting_s"))))
+                 fresh.get("best_sitting_s"),
+                 fresh.get("best_sitting_msgs_day"),
+                 fresh.get("best_sitting_s_day"))))
         A.write_config({"loop": 4, "best_sitting_msgs": 42,
-                        "best_sitting_s": 3600}, cfg)
+                        "best_sitting_s": 3600,
+                        "best_sitting_msgs_day": "2026-01-05",
+                        "best_sitting_s_day": "2026-01-06"}, cfg)
         data = A.read_config(cfg)
         failures += not _check(
             "a stored record is read back untouched",
             data.get("best_sitting_msgs") == 42
             and data.get("best_sitting_s") == 3600
+            and data.get("best_sitting_msgs_day") == "2026-01-05"
+            and data.get("best_sitting_s_day") == "2026-01-06"
             and data.get("loop") == 4, str(data))
-        worse = A.record_plan(data, 7, 60)
+        worse = A.record_plan(data, [(7, 60, "2026-02-02")])
         failures += not _check(
             "a worse sitting never lowers a record",
-            worse == {"best_sitting_msgs": 42, "best_sitting_s": 3600},
+            worse == {"best_sitting_msgs": 42, "best_sitting_s": 3600,
+                      "best_sitting_msgs_day": "2026-01-05",
+                      "best_sitting_s_day": "2026-01-06"},
             str(worse))
-        better = A.record_plan(data, 100, 60)
+        better = A.record_plan(data, [(100, 60, "2026-02-02")])
         failures += not _check(
             "a better sitting raises only what it beats",
-            better == {"best_sitting_msgs": 100, "best_sitting_s": 3600},
+            better == {"best_sitting_msgs": 100, "best_sitting_s": 3600,
+                       "best_sitting_msgs_day": "2026-02-02",
+                       "best_sitting_s_day": "2026-01-06"},
             str(better))
+        equal = A.record_plan(data, [(42, 3600, "2026-03-03")])
+        failures += not _check(
+            "an equal count keeps the day it was first set on",
+            equal == {"best_sitting_msgs": 42, "best_sitting_s": 3600,
+                      "best_sitting_msgs_day": "2026-01-05",
+                      "best_sitting_s_day": "2026-01-06"},
+            str(equal))
         junk = A.record_plan({"best_sitting_msgs": "many",
-                              "best_sitting_s": -5}, None, "soon")
+                              "best_sitting_s": -5,
+                              "best_sitting_msgs_day": 7},
+                             [(None, "soon", "x")])
         failures += not _check(
             "junk in the config clamps to zero",
-            junk == {"best_sitting_msgs": 0, "best_sitting_s": 0},
+            junk == {"best_sitting_msgs": 0, "best_sitting_s": 0,
+                     "best_sitting_msgs_day": "",
+                     "best_sitting_s_day": ""},
             str(junk))
-        only = A.record_plan({"loop": 9, "messages": ["kept"]}, 3, 4)
+        only = A.record_plan({"loop": 9, "messages": ["kept"]},
+                             [(3, 4, "2026-03-03")])
         failures += not _check(
-            "the plan returns nothing but its own two keys",
-            sorted(only) == ["best_sitting_msgs", "best_sitting_s"],
+            "the plan returns nothing but its own four keys",
+            sorted(only) == ["best_sitting_msgs", "best_sitting_msgs_day",
+                             "best_sitting_s", "best_sitting_s_day"],
             str(sorted(only)))
+
+        # the log's runs: a burst of close timestamps is one sitting, a
+        # gap starts the next, and a stamp the file cannot parse is dropped
+        runs = A.history_runs(
+            [("2026-11-01 10:00:00", "a"),
+             ("2026-11-01 10:00:03", "b"),
+             ("junk", "c"),
+             ("2026-11-01 10:30:00", "d"),
+             ("2026-11-02 12:00:00", "e")], 300.0)
+        failures += not _check(
+            "close timestamps group into one run, a gap starts the next",
+            runs == [(2, 3, "2026-11-01"), (1, 0, "2026-11-01"),
+                     (1, 0, "2026-11-02")],
+            str(runs))
+        failures += not _check(
+            "an empty log is no runs at all",
+            A.history_runs([], 300.0) == []
+            and A.history_runs(None, 300.0) == [], "non-empty")
+
+        # the day beside a record, as the tile shows it
+        failures += not _check(
+            "a record day reads as Nov 16, 2026",
+            A.record_day_text("2026-11-16") == "Nov 16, 2026",
+            repr(A.record_day_text("2026-11-16")))
+        failures += not _check(
+            "a single digit day carries no zero pad",
+            A.record_day_text("2026-01-05") == "Jan 5, 2026",
+            repr(A.record_day_text("2026-01-05")))
+        failures += not _check(
+            "junk in a record day reads as no day",
+            A.record_day_text("yesterday") == ""
+            and A.record_day_text(7) == "",
+            repr((A.record_day_text("yesterday"), A.record_day_text(7))))
+
+        # the load-time backfill: the stored log folded into the records
+        # once, and only while it actually knows more than the config does
+        class _Fold:
+            def __init__(self):
+                self.cfg = {"best_sitting_msgs": 0, "best_sitting_s": 0}
+                self.history = [("2026-11-01 10:00:00", "a"),
+                                ("2026-11-01 10:00:03", "b"),
+                                ("2026-11-01 10:00:06", "c"),
+                                ("2026-11-02 12:00:00", "d")]
+                self.msg_interval = 3
+                self.best_sitting_msgs = 0
+                self.best_sitting_s = 0
+                self.best_sitting_msgs_day = ""
+                self.best_sitting_s_day = ""
+                self._config_dirty = False
+                self.seeded = 0
+
+            def _refresh_records(self):
+                self.seeded += 1
+
+        fold = _Fold()
+        A.AutoTyper._backfill_records(fold)
+        failures += not _check(
+            "the backfill reads the log's best run into the records",
+            fold.best_sitting_msgs == 3
+            and fold.best_sitting_s == 6
+            and fold.best_sitting_msgs_day == "2026-11-01"
+            and fold.best_sitting_s_day == "2026-11-01",
+            str((fold.best_sitting_msgs, fold.best_sitting_s,
+                 fold.best_sitting_msgs_day, fold.best_sitting_s_day)))
+        failures += not _check(
+            "a backfill that improved something marks the config dirty",
+            fold._config_dirty and fold.seeded == 1,
+            str((fold._config_dirty, fold.seeded)))
+        fold._config_dirty = False
+        A.AutoTyper._backfill_records(fold)
+        failures += not _check(
+            "a second fold over the same log changes nothing",
+            not fold._config_dirty and fold.seeded == 1,
+            str((fold._config_dirty, fold.seeded)))
 
         # the message pools.  A config from before pools keeps its one
         # pool, a fresh one gets the samples, and an emptied pool stays

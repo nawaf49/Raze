@@ -201,6 +201,8 @@ def main():
         # forced values never leave this process)
         app.best_sitting_msgs = 42
         app.best_sitting_s = 3725
+        app.best_sitting_msgs_day = "2026-11-16"
+        app.best_sitting_s_day = "2026-11-15"
         app._refresh_records()
         root.update_idletasks()
         check("a stored record reaches its tile",
@@ -209,6 +211,12 @@ def main():
               and clock.value._text == A._elapsed_text(3725),
               "%r / %r" % (msgs.value._text if msgs else None,
                            clock.value._text if clock else None))
+        check("the day each record was set reaches its tile",
+              msgs is not None and msgs.date._text == "Nov 16, 2026"
+              and clock is not None
+              and clock.date._text == "Nov 15, 2026",
+              "%r / %r" % (msgs.date._text if msgs else None,
+                           clock.date._text if clock else None))
 
         hwnd = int(root.wm_frame(), 16)
         cw.capture(hwnd, r"C:\Users\nawaf\AppData\Local\Temp\opencode\history.png")
