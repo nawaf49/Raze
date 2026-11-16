@@ -182,6 +182,37 @@ def main():
               card.winfo_height() >= A.px(340),
               "%s (need %s)" % (card.winfo_height(), A.px(340)))
 
+        root.after(200, open_history)
+
+    def open_history():
+        app.show("history")
+        root.after(400, measure_history)
+
+    def measure_history():
+        # the two personal bests, pinned between the header and the day
+        # list - the strip is a fixed height, so it must not resize the card
+        msgs = getattr(app, "tile_best_msgs", None)
+        clock = getattr(app, "tile_best_time", None)
+        check("the records tiles are on the history card",
+              msgs is not None and clock is not None,
+              "%s / %s" % (msgs, clock))
+        # a forced record has to reach its tile through the same refresh
+        # the stop path calls (_save_config is stubbed above, so the
+        # forced values never leave this process)
+        app.best_sitting_msgs = 42
+        app.best_sitting_s = 3725
+        app._refresh_records()
+        root.update_idletasks()
+        check("a stored record reaches its tile",
+              msgs is not None and msgs.value._text == "42"
+              and clock is not None
+              and clock.value._text == A._elapsed_text(3725),
+              "%r / %r" % (msgs.value._text if msgs else None,
+                           clock.value._text if clock else None))
+
+        hwnd = int(root.wm_frame(), 16)
+        cw.capture(hwnd, r"C:\Users\nawaf\AppData\Local\Temp\opencode\history.png")
+
         root.after(200, open_updates)
 
     def open_updates():

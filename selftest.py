@@ -873,6 +873,46 @@ def run():
                                data.get("loop") == 9
                                and data.get("messages") == ["kept"], str(data))
 
+        # the personal bests the History tab shows: they arrive through
+        # the defaults, they survive a file that already carries them,
+        # and the plan that folds one sitting into them is pure
+        fresh = A.read_config(os.path.join(tmp, "no-such-file.json"))
+        failures += not _check(
+            "a fresh config carries both record keys",
+            fresh.get("best_sitting_msgs") == 0
+            and fresh.get("best_sitting_s") == 0,
+            str((fresh.get("best_sitting_msgs"),
+                 fresh.get("best_sitting_s"))))
+        A.write_config({"loop": 4, "best_sitting_msgs": 42,
+                        "best_sitting_s": 3600}, cfg)
+        data = A.read_config(cfg)
+        failures += not _check(
+            "a stored record is read back untouched",
+            data.get("best_sitting_msgs") == 42
+            and data.get("best_sitting_s") == 3600
+            and data.get("loop") == 4, str(data))
+        worse = A.record_plan(data, 7, 60)
+        failures += not _check(
+            "a worse sitting never lowers a record",
+            worse == {"best_sitting_msgs": 42, "best_sitting_s": 3600},
+            str(worse))
+        better = A.record_plan(data, 100, 60)
+        failures += not _check(
+            "a better sitting raises only what it beats",
+            better == {"best_sitting_msgs": 100, "best_sitting_s": 3600},
+            str(better))
+        junk = A.record_plan({"best_sitting_msgs": "many",
+                              "best_sitting_s": -5}, None, "soon")
+        failures += not _check(
+            "junk in the config clamps to zero",
+            junk == {"best_sitting_msgs": 0, "best_sitting_s": 0},
+            str(junk))
+        only = A.record_plan({"loop": 9, "messages": ["kept"]}, 3, 4)
+        failures += not _check(
+            "the plan returns nothing but its own two keys",
+            sorted(only) == ["best_sitting_msgs", "best_sitting_s"],
+            str(sorted(only)))
+
     print("single instance")
     # False here is unambiguous: it comes back only on ERROR_ALREADY_EXISTS,
     # and every other path of the function returns True.  Raze may already be

@@ -350,7 +350,12 @@ def read_config(path=None):
         "msg_interval": 2, "loop": 0, "random": False,
         "start_key": "f8", "stop_key": "f9", "pause_key": "f6",
         "resume_key": "f7",
-        "messages": []
+        "messages": [],
+        # The two personal bests the History tab shows.  They default to
+        # 0 rather than being absent so a fresh config always has them,
+        # but a config that carries them keeps them: nothing here ever
+        # filters a file down to the keys this build knows about.
+        "best_sitting_msgs": 0, "best_sitting_s": 0,
     }
     target = path or config_path()
     try:
@@ -390,6 +395,34 @@ def group_history(history):
         day = stamp[:10]
         days[day] = days.get(day, 0) + 1
     return days
+
+
+def _as_count(value):
+    """A stored counter as a non-negative int, whatever it arrived as.
+
+    A config edited by hand can carry a string, a null or a negative
+    number, and none of them may reach the UI or poison a max().
+    """
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def record_plan(cfg, sent, secs):
+    """The two personal bests one finished sitting leaves behind.
+
+    Pure, like every other plan here: `cfg` is read and never written,
+    and only the two keys this feature owns come back - every other key
+    in it is the caller's to carry, so a record can never be the reason
+    something else drops out of the file.  A record only ever moves up,
+    junk clamps to 0, and `secs` counts whole seconds the way the
+    session clock does.
+    """
+    return {"best_sitting_msgs": max(_as_count(cfg.get("best_sitting_msgs")),
+                                     _as_count(sent)),
+            "best_sitting_s": max(_as_count(cfg.get("best_sitting_s")),
+                                  _as_count(secs))}
 
 
 def pretty_day(day):
@@ -3959,6 +3992,39 @@ class AutoTyper:
                                         color=FAINT, height=18)
         self.history_total.pack(side="right")
 
+        # The two personal bests, drawn with the same StatTile the session
+        # card uses so the two cards read as one design.  They go between
+        # the header and the day list - the only room there is: the card
+        # is a fixed 726 and the holder below expands into whatever is
+        # left, so the list gives up a row or two instead of the card
+        # growing into the footer.  The strip is pinned like the Random
+        # row, so its tiles cannot resize it.
+        #
+        # Both pins are needed.  pack_propagate(False) governs pack slaves
+        # only - these tiles are gridded, and grid has its own propagate
+        # switch - so the strip would have come out 200 tall (CTkFrame's
+        # default) from the tiles' own requested height, eating three day
+        # rows.  grid_propagate(False) plus an explicit height on each
+        # tile pins it at 76 either way.
+        strip = ctk.CTkFrame(card, fg_color="transparent", height=76)
+        strip.pack(fill="x", padx=26, pady=(0, 16))
+        strip.pack_propagate(False)
+        strip.grid_propagate(False)
+        strip.grid_columnconfigure(0, weight=1)
+        strip.grid_columnconfigure(1, weight=1)
+        strip.grid_rowconfigure(0, weight=1)
+        self.tile_best_msgs = StatTile(strip, "MOST IN ONE SITTING",
+                                       width=160, height=76,
+                                       worst="999999999")
+        self.tile_best_msgs.grid(row=0, column=0, sticky="nsew",
+                                 padx=(0, 7))
+        self.tile_best_time = StatTile(strip, "LONGEST SITTING",
+                                       width=140, height=76,
+                                       worst="999y 364d")
+        self.tile_best_time.grid(row=0, column=1, sticky="nsew",
+                                 padx=(7, 0))
+        self._refresh_records()
+
         # The log is baked artwork as well - Windows would render it with
         # ClearType fringes, which is exactly what this app avoids.
         #
@@ -4098,6 +4164,24 @@ class AutoTyper:
         # draw once more now that it has - that is what decides how many rows
         # the space can actually show
         self.root.after_idle(self._render_history)
+
+    def _refresh_records(self):
+        """Put the current bests on the History tiles.
+
+        The tab is built lazily, so this is called from `_record_session`
+        long before the tiles exist as often as after - a missing tile is
+        simply nothing to update, and the build calls this itself to seed
+        them from the config.
+        """
+        msgs = getattr(self, "tile_best_msgs", None)
+        clock = getattr(self, "tile_best_time", None)
+        if msgs is None or clock is None:
+            return
+        try:
+            msgs.set(str(getattr(self, "best_sitting_msgs", 0)))
+            clock.set(_elapsed_text(getattr(self, "best_sitting_s", 0)))
+        except Exception:
+            pass
 
     # ----- updates view -------------------------------------------------- #
     def _build_updates_view(self):
@@ -4680,6 +4764,11 @@ class AutoTyper:
         if self._updates_unseen:
             self._set_updates_dot(True)
 
+        # the personal bests the History tab shows - a config from before
+        # they existed answers 0, which is the honest answer for someone
+        # who has not set one yet
+        self.best_sitting_msgs = _as_count(c.get("best_sitting_msgs"))
+        self.best_sitting_s = _as_count(c.get("best_sitting_s"))
 
     def _commit_fields(self):
         """Read what is on screen, not what was there before the user typed.
@@ -4712,6 +4801,8 @@ class AutoTyper:
             "daily": self.daily,
             "install_asked": self.install_asked,
             "seen_version": self.seen_version,
+            "best_sitting_msgs": getattr(self, "best_sitting_msgs", 0),
+            "best_sitting_s": getattr(self, "best_sitting_s", 0),
         })
         try:
             write_config(self.cfg)
@@ -5426,6 +5517,35 @@ class AutoTyper:
         # yank the user back to Raze - the app keeps running in the
         # background and stays one click away in the taskbar.
 
+        self._record_session()
+
+    def _record_session(self):
+        """Fold a finished sitting into the personal bests, if it beat one.
+
+        `_stop` is the one place a session is over - `_start` only ever
+        runs while `not typing`, so a live session's stats are never
+        discarded without passing through here first - and `_on_close`
+        catches one that was still going.  Best effort throughout: this
+        sits inside the stop path, so nothing in it may raise and take
+        the status line down with it.
+        """
+        try:
+            stats = getattr(self, "stats", None) or {}
+            plan = record_plan(self.cfg, stats.get("sent"),
+                               stats.get("elapsed"))
+            if (plan["best_sitting_msgs"]
+                    == getattr(self, "best_sitting_msgs", 0)
+                    and plan["best_sitting_s"]
+                    == getattr(self, "best_sitting_s", 0)):
+                return                      # nothing beat anything
+            self.best_sitting_msgs = plan["best_sitting_msgs"]
+            self.best_sitting_s = plan["best_sitting_s"]
+            self.cfg.update(plan)
+            self._save_config()
+            self._refresh_records()
+        except Exception:
+            pass
+
     def _typing_worker(self):
         # The settings are plain attributes the Tk thread writes - no Tk
         # object is ever read from here - so they are picked up again every
@@ -5790,6 +5910,9 @@ class AutoTyper:
     def _on_close(self):
         """Save everything and leave."""
         try:
+            # a sitting still under way never reaches _stop, so its
+            # stats are folded in here or the record never sees them
+            self._record_session()
             self.stop_event.set()
             # wake the update checker so it leaves with the app instead
             # of sleeping out the rest of its poll interval
