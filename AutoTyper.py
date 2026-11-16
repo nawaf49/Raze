@@ -521,6 +521,12 @@ def focus_existing_instance():
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Raze"
 INSTALL_LINK_NAME = "Raze.lnk"
 INSTALL_DESC = "Raze - type anything automatically"
+# "Start with Windows" is a Run-key entry: HKCU, per user, no admin and
+# no second file - the same shape as every other install write here.  The
+# key is the store, not config.json: the box shows what the registry
+# says, so a config file can never disagree with the machine about it.
+STARTUP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+STARTUP_NAME = "Raze"
 # csidl values Explorer itself resolves: a Desktop redirected by OneDrive
 # does not sit at %USERPROFILE%\Desktop, and guessing from environment
 # variables gets that wrong.  CSIDL_PROGRAMS is the Start Menu's *Programs*
@@ -651,6 +657,84 @@ def install_needed(exe, registered):
     if not exe or registered:
         return False
     return not _same_file(exe, install_exe_path())
+
+
+def startup_target():
+    """The exe a logon launch should run.
+
+    The installed copy wins - it is the one that survives the file the
+    user happened to launch being moved - then whatever this process was
+    started from (a portable or dev run), and finally the path the next
+    install would write, so the answer is never empty and enabling is not
+    silently impossible on a first-ever run.  Whether that path exists is
+    the caller's question: a target that is not there is a refusal, not
+    a value.
+    """
+    target = install_exe_path()
+    if os.path.exists(target):
+        return target
+    return running_exe() or target
+
+
+def startup_plan(raw):
+    """The Run-key entry a launch target implies, computed read-only.
+
+    Pure: no registry, no file.  The plan names the key, the value name,
+    the exact string Windows would be handed - quoted, because an
+    install path carries spaces - and whether the entry should exist at
+    all: an empty target means no entry, which is what an uninstall
+    writes.
+    """
+    target = (raw or "").strip()
+    return {"key": STARTUP_KEY, "name": STARTUP_NAME,
+            "command": ('"%s"' % target) if target else "",
+            "enabled": bool(target)}
+
+
+def startup_value():
+    """What the Run key currently says for Raze, or "".
+
+    Read-only and best effort: a value that is not there, a key that
+    will not open and a value that is not a string all answer "", which
+    is also what "off" reads as - a failure can never make the checkbox
+    claim an entry the machine does not have.
+    """
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_KEY) as key:
+            value, _kind = winreg.QueryValueEx(key, STARTUP_NAME)
+    except OSError:
+        return ""
+    return value if isinstance(value, str) else ""
+
+
+def set_startup(enabled, command, reg=None):
+    """Write or clear the Run entry, answering whether it is on.
+
+    `reg` is the winreg seam: the selftest drives a stub, so the real
+    Run key is never a test surface.  Enabling with nothing to launch
+    refuses silently, and a key that will not take the write answers
+    False - but the caller never trusts the answer, it re-reads the key,
+    because only the registry may decide what the box shows.
+    """
+    import winreg
+    reg = reg or winreg
+    value = (command or "").strip() if enabled else ""
+    if enabled and not value:
+        return False
+    try:
+        with reg.OpenKey(reg.HKEY_CURRENT_USER, STARTUP_KEY, 0,
+                         reg.KEY_SET_VALUE) as key:
+            if value:
+                reg.SetValueEx(key, STARTUP_NAME, 0, reg.REG_SZ, value)
+            else:
+                try:
+                    reg.DeleteValue(key, STARTUP_NAME)
+                except OSError:
+                    pass
+    except OSError:
+        return False
+    return bool(value)
 
 
 def _native_error(title, message):
@@ -1446,6 +1530,7 @@ def do_uninstall():
     plan = install_plan()
     _remove_uninstall_entry()
     _unregister_aumid(plan["target"])
+    set_startup(False, "")
     _forget_links(plan["links"])
     target, directory = plan["target"], plan["dir"]
     if _same_file(running_exe(), target):
@@ -4221,6 +4306,7 @@ class AutoTyper:
         except Exception:
             ctk.CTkLabel(head, text="CONFIGURATION", font=(FONT_SB, -10),
                          text_color=TEXT, height=18).pack(side="left")
+        self._build_startup_toggle(head)
 
         body = ctk.CTkFrame(card, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=24, pady=(0, 20))
@@ -4309,6 +4395,91 @@ class AutoTyper:
             give = over / 2.0
             head.pack_configure(pady=(max(px(8), px(26) - give), px(10)))
             body.pack_configure(pady=(0, max(px(8), px(20) - give)))
+
+    def _build_startup_toggle(self, head):
+        """Start with Windows, right-aligned on the CONFIGURATION line.
+
+        The config card's stack measures exactly CONFIG_H with no slack,
+        so a whole new row would clamp the Random line off its own row -
+        the caption is the one place with room, and an 18 design px
+        control on an 18 px caption adds no height at all.  Both pieces
+        go straight into `head`: a CTkFrame would default to 200x200 and
+        blow the caption open, and a plain tk frame would need a
+        background of its own.
+
+        CTk scales width/height/checkbox_*/corner_radius internally, so
+        these are design px - a px() here would double them at every
+        scale but 100%, which is what the Random row's box still does.
+        """
+        try:
+            self.startup_box = ctk.CTkCheckBox(
+                head, text="", width=18, height=18,
+                checkbox_width=18, checkbox_height=18,
+                corner_radius=5, border_width=2, border_color=BORDER_2,
+                fg_color=TEXT, hover_color="#c9c9d2", checkmark_color=BG,
+                command=self._toggle_startup)
+            # packed first, so it lands on the right of the caption
+            self.startup_box.pack(side="right")
+            if startup_value():
+                self.startup_box.select()
+        except Exception:
+            self.startup_box = None
+        cap = BakedLabel(head, "Start with Windows", size=11, color=MUTED,
+                         height=18)
+        cap.pack(side="right", padx=(0, 6))
+        # Tk bindtags run widget, class, toplevel, all - never the
+        # intermediate parents - so the label needs its own binding, and
+        # a bind here can never double-fire the checkbox's own command.
+        # select()/deselect() do not fire that command either, which is
+        # what keeps the silent revert below from bouncing back in.
+        def _flip(_event=None):
+            box = getattr(self, "startup_box", None)
+            if box is not None:
+                try:
+                    box.toggle()
+                except Exception:
+                    pass
+        cap.bind("<Button-1>", _flip)
+
+    def _set_startup_word(self):
+        """Put the box back to what the Run key actually says.
+
+        The registry is the store, so a refusal - nothing to launch, a
+        key that will not take the write - just leaves the toggle where
+        the machine is, with no word on screen.
+        """
+        box = getattr(self, "startup_box", None)
+        if box is None:
+            return
+        try:
+            if startup_value():
+                box.select()
+            else:
+                box.deselect()
+        except Exception:
+            pass
+
+    def _toggle_startup(self):
+        """Start with Windows, written straight to the Run key.
+
+        Nothing is remembered in config.json: the box reads the key
+        before it can disagree with it, and enabling with no target to
+        launch refuses silently rather than writing an entry that would
+        fail at logon.
+        """
+        box = getattr(self, "startup_box", None)
+        if box is None:
+            return
+        try:
+            want = bool(box.get())
+        except Exception:
+            return
+        target = startup_target()
+        if want and not os.path.exists(target):
+            self._set_startup_word()
+            return
+        set_startup(want, startup_plan(target if want else "")["command"])
+        self._set_startup_word()
 
     def _set_random_word(self):
         word = getattr(self, "random_word", None)

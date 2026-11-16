@@ -1169,6 +1169,69 @@ def run():
         A.aumid_registry_plan(target, None)[1] == [("DisplayName", "Raze")],
         str(A.aumid_registry_plan(target, None)))
 
+    # "Start with Windows" is a Run-key entry: the config file is never
+    # involved, so the pure plan plus a write against a stub registry
+    # are the whole surface a suite may touch.  The real Run key is the
+    # user's machine, not a test field.
+    class _RunReg:
+        HKEY_CURRENT_USER = object()
+        KEY_SET_VALUE = 2
+        REG_SZ = 1
+
+        def __init__(self):
+            self.values = {}
+            self.opened = []
+
+        def OpenKey(self, _hkey, path, _reserved=0, _access=0):
+            self.opened.append(path)
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def SetValueEx(self, _key, name, _reserved, _kind, value):
+            self.values[name] = value
+
+        def DeleteValue(self, _key, name):
+            if name not in self.values:
+                raise OSError(name)
+            del self.values[name]
+
+    entry = A.startup_plan(r"C:\p\Raze.exe")
+    failures += not _check(
+        "the startup entry names the Run key and Raze",
+        entry["key"] == A.STARTUP_KEY and entry["name"] == A.STARTUP_NAME
+        and entry["key"].endswith("CurrentVersion\\Run"),
+        str(entry))
+    failures += not _check(
+        "the startup command is quoted for its spaces",
+        entry["command"] == '"C:\\p\\Raze.exe"' and entry["enabled"],
+        str(entry))
+    blank = A.startup_plan("")
+    failures += not _check(
+        "no target means no entry at all",
+        blank["command"] == "" and not blank["enabled"], str(blank))
+    failures += not _check(
+        "a startup target always answers a path",
+        bool(A.startup_target()), A.startup_target())
+    reg = _RunReg()
+    failures += not _check(
+        "enabling writes the quoted command into the Run key",
+        A.set_startup(True, entry["command"], reg=reg)
+        and reg.values.get(A.STARTUP_NAME) == entry["command"]
+        and reg.opened[-1] == A.STARTUP_KEY,
+        str((reg.values, reg.opened)))
+    refused = A.set_startup(True, "", reg=reg)
+    kept = reg.values.get(A.STARTUP_NAME) == entry["command"]
+    cleared = A.set_startup(False, "", reg=reg)
+    failures += not _check(
+        "an empty enable refuses, disabling clears the entry",
+        (not refused and kept
+         and not cleared and A.STARTUP_NAME not in reg.values),
+        str((refused, kept, cleared, reg.values)))
 
     print("update")
     # Read-only throughout: the checker thread downloads and the apply
