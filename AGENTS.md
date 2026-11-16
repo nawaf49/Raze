@@ -72,7 +72,7 @@ These are not preferences. Breaking one silently ruins the product.
 | `AutoTyper.py` | Everything: UI, typing engine, heartbeat, config, Win32 bindings |
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
-| `selftest.py` | 168 headless checks, run via `Raze.exe --selftest` |
+| `selftest.py` | 182 headless checks, run via `Raze.exe --selftest` |
 | `pause_and_toast.py` | 57 checks: pause/resume/toast routing, a tab-in stop continued by the resume key and begun again by the start key, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
 | `layout_check.py` | 39 checks: the window fits the work area, the uptime on the status line, the loop counter's colour, the four keycaps, the hotkeys card and button hover backgrounds, the History tab's two record tiles (a forced record reaching its tile), the Updates tab's rows and its update-done badge (every row body on one x), captures the badge state plus typer/hotkeys/history/updates |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
@@ -619,9 +619,9 @@ payload that is unpacked from scratch on every launch.
 ## Config
 
 `%APPDATA%\Raze\config.json`. Keys: `msg_interval`, `loop`, `random`,
-`start_key`, `stop_key`, `pause_key`, `resume_key`, `messages`, `history`,
-`daily`, `install_asked`, `seen_version`, `best_sitting_msgs`,
-`best_sitting_s`.
+`start_key`, `stop_key`, `pause_key`, `resume_key`, `messages`, `profiles`,
+`active_profile`, `history`, `daily`, `install_asked`, `seen_version`,
+`best_sitting_msgs`, `best_sitting_s`.
 
 - `install_asked` is vestigial (see *Install*): the install question is
   gone, but the key stays readable and written on save — a config that
@@ -647,6 +647,41 @@ payload that is unpacked from scratch on every launch.
 - `history` is a list of `{"t": "...", "m": "..."}`, capped at `HISTORY_KEEP`.
   Content and timestamps are **stored but never displayed** — the History tab
   shows day counts and a lifetime total only.
+- **Message pools are `profiles` + `active_profile`; `messages` is the open
+  one.** `profiles_plan(cfg)` (pure, beside `record_plan`) turns any config
+  into `{name: [messages]}` plus the active name: a config from before pools
+  keeps its `messages` as the single pool `Default`, a fresh config gets
+  `SAMPLE_MESSAGES`, and junk anywhere — a pool that is not a list, an empty
+  name, an active name that matches nothing — falls back to the first pool
+  rather than to nothing. **`messages` has no default in `read_config`**,
+  the way `history`/`daily` do not: absent means "never had a pool" (the
+  samples apply), a stored `[]` means a pool the user emptied and it must
+  come back empty — filling the key in would make those one answer, which
+  is what used to resurrect the sample messages after a Clear. `_save_config`
+  refreshes the active pool from the editor and writes `profiles` and
+  `active_profile`; `messages` keeps carrying the active pool as well, for
+  a hand-edit that drops the newer keys.
+- **The pool card carries the switcher** — a row between the editor and the
+  file pills: a `CTkOptionMenu` (palette-styled, `dynamic_resizing=False`
+  so the row can never move) listing every pool, plus `New` (first free
+  `Profile N`, starts empty) and `Delete` (confirm dialog; refuses to drop
+  the last pool, because the typing thread needs one to read). All three
+  paths — switch, new, delete — end in `_update_pool_meta`, which is the
+  single place a pool edit marks the config dirty. `_switch_profile` stores
+  the outgoing pool before loading the incoming one, so nothing is lost
+  between pools, and a switch mid-run takes effect from the next message
+  like any other pool edit.
+- **Edits reach the disk without waiting for a close.** `_update_pool_meta`,
+  `_set_msg_interval` and `_set_loop` set `_config_dirty`;
+  `_maybe_save(now)` — called from the heartbeat — writes when either that
+  flag has aged `CONFIG_SAVE_EVERY` (2 s) or `_history_dirty` has aged
+  `SAVE_EVERY` (60 s), and one write serves both gates because the file
+  carries everything at once. **The flags are cleared *after* `_save_config`
+  returns**, never before: the save begins with `_commit_fields()`, whose
+  setters mark the config dirty again, so clearing first left the flag set
+  by the very write that saved it and the heartbeat would have rewritten
+  the file every two seconds forever. `_apply_config` clears the flag on
+  the way out — loading is not editing.
 - **The two personal bests the History tab shows are config keys**
   (`best_sitting_msgs`, `best_sitting_s` in whole seconds), unlike the
   Start-with-Windows box above. `read_config` defaults them to 0 — an
@@ -680,8 +715,9 @@ payload that is unpacked from scratch on every launch.
   `hist_measure` in `%TEMP%\opencode`).
 - Written atomically (`.tmp` then rename). No BOM — never use PowerShell
   `Set-Content -Encoding UTF8` on it, PS 5.1 writes one and breaks the parser.
-- `read_config` defaults deliberately omit `history`/`daily`. Never filter a
-  config down to known keys or you will delete the user's history on save.
+- `read_config` defaults deliberately omit `history`, `daily` and `messages`.
+  Never filter a config down to known keys or you will delete the user's
+  history on save.
 - **The configuration *card* has no slack.** Its stack — two field rows, the
   rule, the Random row — measures exactly `CONFIG_H = 336` at 100%, and the
   artwork outgrows its design box below ~60% scale (rounded font metrics,
