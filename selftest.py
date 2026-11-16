@@ -723,6 +723,35 @@ def run():
         xml_detail = str(e)
     failures += not _check("the toast payload is well-formed XML",
                            xml_ok, xml_detail)
+    # the header icon rides in the payload (appLogoOverride) because
+    # Windows cannot resolve one from an exe-path AppID: the image element
+    # has to be there, and the file it names has to be a real PNG, or the
+    # banner falls back to the generic page this fix exists to kill
+    try:
+        icon_doc = ElementTree.fromstring(A.toast_xml("Raze", "selftest"))
+        images = list(icon_doc.iter("image"))
+        src = images[0].get("src") if images else ""
+        image_ok = (len(images) == 1
+                    and images[0].get("placement") == "appLogoOverride"
+                    and src.startswith("file:///"))
+        image_detail = str([(i.get("placement"), i.get("src"))
+                            for i in images])
+    except Exception as e:
+        image_ok = False
+        image_detail = str(e)
+    failures += not _check("the toast payload carries the app logo",
+                           image_ok, image_detail)
+    try:
+        icon_path = A.toast_icon_path()
+        with open(icon_path, "rb") as fh:
+            magic = fh.read(8)
+        icon_ok = bool(icon_path) and magic == b"\x89PNG\r\n\x1a\n"
+        icon_detail = str((icon_path, magic))
+    except Exception as e:
+        icon_ok = False
+        icon_detail = str(e)
+    failures += not _check("the toast icon unpacks to a PNG on disk",
+                           icon_ok, icon_detail)
     # a bad IID string would raise inside _guid at toast time, where the
     # caller only ever sees False - so parse them all here instead
     try:
@@ -994,22 +1023,30 @@ def run():
                            A.install_needed(fresh, False))
     # the entry point has to consult that gate: a dev run must never get
     # as far as starting the worker, and a real download must.  The probe
-    # replaces _install_now, so do_install is never touched
+    # replaces _install_now and _repair_shortcuts, so do_install is never
+    # touched and the repair thread (which rewrites the real Start Menu
+    # links) never starts
     class _InstallProbe:
         started = 0
+        repaired = 0
 
         def _install_now(self):
             _InstallProbe.started += 1
+
+        def _repair_shortcuts(self):
+            _InstallProbe.repaired += 1
     probe = _InstallProbe()
     real_running_exe = A.running_exe
     real_registry_installed = A.registry_installed
     try:
         A.AutoTyper._auto_install(probe)
         dev_started = _InstallProbe.started
+        dev_repaired = _InstallProbe.repaired
         A.running_exe = lambda: fresh
         A.registry_installed = lambda: False
         A.AutoTyper._auto_install(probe)
         fresh_started = _InstallProbe.started
+        fresh_repaired = _InstallProbe.repaired - dev_repaired
     finally:
         A.running_exe = real_running_exe
         A.registry_installed = real_registry_installed
@@ -1017,6 +1054,121 @@ def run():
         "the install worker starts only for a real download",
         dev_started == 0 and fresh_started == 1,
         str((dev_started, fresh_started)))
+    # the AUMID repair hangs off the same gate, the other way round: it
+    # only has work to do when Windows already lists Raze
+    failures += not _check(
+        "the AUMID repair runs only when there is nothing to install",
+        dev_repaired == 1 and fresh_repaired == 0,
+        str((dev_repaired, fresh_repaired)))
+
+    # The banner's header name and icon resolve by matching the toast's
+    # app id against the Start Menu link's AppUserModelID, so the link has
+    # to carry the exact string toast_app_id reports.  The rule is pure,
+    # the key layout is fixed by the SDK, and the stamp round-trips on a
+    # throwaway link in a temp dir - never a shell folder.
+    target = r"C:\somewhere\Raze.exe"
+    failures += not _check(
+        "a link without an AUMID needs a stamp",
+        A.aumid_needs_stamp(None, target)
+        and A.aumid_needs_stamp("", target))
+    failures += not _check(
+        "a matching AUMID does not need a stamp",
+        not A.aumid_needs_stamp(target, target))
+    failures += not _check(
+        "another app's AUMID needs a stamp",
+        A.aumid_needs_stamp(r"C:\other\Elsewhere.exe", target))
+    failures += not _check(
+        "the property key is the SDK's",
+        A._AUMID_FMTID == "{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}"
+        and A._AUMID_PID == 5 and A._VT_LPWSTR == 31
+        and A._IID_PROPERTY_STORE
+        == "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}",
+        str((A._AUMID_FMTID, A._AUMID_PID)))
+    import uuid
+    key = A._aumid_key()
+    failures += not _check(
+        "the key carries the format id and pid",
+        ctypes.string_at(ctypes.byref(key.fmtid), 16)
+        == uuid.UUID(A._AUMID_FMTID).bytes_le and key.pid == A._AUMID_PID,
+        str(key.pid))
+    # x64 PROPVARIANT: vt at 0, the string pointer at 8, 24 bytes with
+    # the trailing pad a callee copying sizeof(PROPVARIANT) reads
+    failures += not _check(
+        "the structs match the x64 layout",
+        ctypes.sizeof(A._PROPERTYKEY) == 20
+        and ctypes.sizeof(A._PROPVARIANT) == 24
+        and A._PROPVARIANT.vt.offset == 0
+        and A._PROPVARIANT.pwszVal.offset == 8,
+        str((ctypes.sizeof(A._PROPERTYKEY),
+             ctypes.sizeof(A._PROPVARIANT))))
+    with tempfile.TemporaryDirectory(prefix="aumid_") as tmp:
+        link = os.path.join(tmp, "Raze.lnk")
+        exe = os.path.join(tmp, "Raze.exe")
+        A._create_shortcut(link, exe, tmp, exe, "selftest")
+        stamped = A._shortcut_aumid(link)
+    failures += not _check(
+        "a new link carries its target as AUMID",
+        stamped == exe, str(stamped))
+    # The icon location is the other half of the toast header: the tile
+    # Windows draws is the matched link's own icon, and every link
+    # written before the fix stored the index glued onto the path - a
+    # file named "Raze.exe,0" that does not exist, so the shell drew a
+    # blank page instead of the emblem.
+    failures += not _check(
+        "an unreadable icon location counts as wrong",
+        A.icon_needs_fix(None, exe))
+    failures += not _check(
+        "the target's own icon is left alone",
+        not A.icon_needs_fix((exe, 0), exe))
+    failures += not _check(
+        "the glued-on index is caught",
+        A.icon_needs_fix((exe + ",0", 0), exe))
+    failures += not _check(
+        "an index that is not zero is caught",
+        A.icon_needs_fix((exe, 1), exe))
+    with tempfile.TemporaryDirectory(prefix="icon_") as tmp:
+        link = os.path.join(tmp, "Raze.lnk")
+        exe = os.path.join(tmp, "Raze.exe")
+        # the icon argument is a bare path: SetIconLocation takes the
+        # index as its own argument, so a fresh link must store the
+        # target with nothing glued onto it
+        A._create_shortcut(link, exe, tmp, exe, "selftest")
+        written = A._shortcut_icon(link)
+        # the exact shape do_install used to write - the index glued
+        # onto the path, which no file ever answers to
+        A._create_shortcut(link, exe, tmp, exe + ",0", "selftest")
+        broken = A._shortcut_icon(link)
+        fixed = A._set_shortcut_icon(link, exe, 0)
+        after = A._shortcut_icon(link)
+    failures += not _check(
+        "a fresh link stores the target as its icon",
+        written == (exe, 0), str(written))
+    failures += not _check(
+        "a glued icon path is read back as written",
+        broken == (exe + ",0", 0), str(broken))
+    failures += not _check(
+        "the repair rewrites a broken icon location",
+        fixed and after == (exe, 0), str((fixed, after)))
+    # The attribution area (header name + tile) is shell-controlled and
+    # cannot come from the payload, so an unpackaged app names it in the
+    # AUMID registration - DisplayName and IconUri under
+    # Software\Classes\AppUserModelId.  Pure here: the write itself
+    # happens on the install/repair worker, never in a suite.
+    subkey, values = A.aumid_registry_plan(target, r"C:\t\emblem.png")
+    failures += not _check(
+        "the header registration lives under the AUMID's path",
+        subkey == "Software\\Classes\\AppUserModelId\\" + target,
+        subkey)
+    failures += not _check(
+        "the header registration carries name and tile",
+        ("DisplayName", "Raze") in values
+        and ("IconUri", r"C:\t\emblem.png") in values,
+        str(values))
+    failures += not _check(
+        "no icon file leaves IconUri out entirely",
+        A.aumid_registry_plan(target, None)[1] == [("DisplayName", "Raze")],
+        str(A.aumid_registry_plan(target, None)))
+
 
     print("update")
     # Read-only throughout: the checker thread downloads and the apply

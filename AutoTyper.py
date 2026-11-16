@@ -16,10 +16,12 @@ import json
 import math
 import os
 import random
+import struct
 import sys
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 
 import customtkinter as ctk
 import tkinter as tk
@@ -706,6 +708,12 @@ def _create_shortcut(link_path, target, workdir, icon, desc):
     verified by reading the written link back, an index off by one saves a
     link with no target in it at all); IPersistFile's Save is 6 after a
     QueryInterface for its IID.
+
+    icon is a bare path, never "path,index": SetIconLocation takes the
+    index as its own argument (0 below), so the WScript spelling glued
+    onto the path stores a file named "Raze.exe,0" that does not exist -
+    the shell then draws a blank page where the emblem should be, on the
+    link and in the toast header alike.
     """
     from ctypes import wintypes
 
@@ -775,6 +783,568 @@ def _create_shortcut(link_path, target, workdir, icon, desc):
                 ole32.CoUninitialize()
             except Exception:
                 pass
+    # After every release above, so the file is closed and this call owns
+    # its own apartment: the banner's header name and icon resolve through
+    # this link's AppUserModelID matched against the toast's app id (see
+    # toast_app_id) - stamp it with the target path, the very string the
+    # toast reports while the registry lists Raze.  Best effort: a link
+    # that refuses the property still opens and uninstalls, only the
+    # header stays generic.
+    _set_shortcut_aumid(link_path, target)
+
+
+def _notify_shell(path):
+    """Tell the shell a file changed, so caches holding it drop it.
+
+    SHChangeNotify is void and best effort - it is wrapped so it can
+    never fail a write.  SHCNE_UPDATEITEM with SHCNF_PATHW and a NULL
+    second operand is the documented shape for "this path's contents
+    changed" (ShlObj_core.h).  Without it a rewritten link keeps its
+    old icon in Explorer's cache until something else invalidates it.
+    """
+    try:
+        shell32 = ctypes.windll.shell32
+        shell32.SHChangeNotify.argtypes = [ctypes.c_long, ctypes.c_uint,
+                                           ctypes.c_wchar_p,
+                                           ctypes.c_void_p]
+        shell32.SHChangeNotify.restype = None
+        shell32.SHChangeNotify(0x00002000, 0x0005, path, None)
+    except Exception:
+        pass
+
+
+# System.AppUserModel.ID - propkey.h: {9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3},
+# pid 5, type VT_LPWSTR.  IPropertyStore's IID comes from propsys.idl, and its
+# vtable runs QI/AddRef/Release 0-2, GetCount 3, GetAt 4, GetValue 5, SetValue
+# 6, Commit 7 - the slots are called through _vt like every other COM call here.
+_AUMID_FMTID = "{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}"
+_AUMID_PID = 5
+_VT_LPWSTR = 31
+_IID_PROPERTY_STORE = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
+
+
+class _PROPERTYKEY(ctypes.Structure):
+    _fields_ = [("fmtid", _GUID), ("pid", ctypes.c_ulong)]
+
+
+class _PROPVARIANT(ctypes.Structure):
+    """Just enough PROPVARIANT for one VT_LPWSTR: header then the pointer.
+
+    x64 layout - vt at 0, pwszVal at 8, 24 bytes total - and the trailing
+    pad matters: a callee that copies sizeof(PROPVARIANT) reads all 24.
+    """
+    _fields_ = [("vt", ctypes.c_ushort),
+                ("r1", ctypes.c_ushort),
+                ("r2", ctypes.c_ushort),
+                ("r3", ctypes.c_ushort),
+                ("pwszVal", ctypes.c_void_p),
+                ("pad", ctypes.c_byte * 8)]
+
+
+def _aumid_key():
+    # Not key.fmtid = _guid(...): AutoTyper defines _GUID twice (install at
+    # ~672, toast at ~1396) and _guid() builds the second class while this
+    # struct's field is typed with the first - ctypes rejects that with the
+    # wonderfully confusing "incompatible types, _GUID instance instead of
+    # _GUID instance".  Bytes need no class identity.
+    import uuid
+    key = _PROPERTYKEY()
+    ctypes.memmove(ctypes.byref(key.fmtid),
+                   uuid.UUID(_AUMID_FMTID).bytes_le, 16)
+    key.pid = _AUMID_PID
+    return key
+
+
+def _set_shortcut_aumid(link_path, appid):
+    """Stamp PKEY_AppUserModel_ID onto a .lnk.  Best effort: True if stamped.
+
+    Opens the link through IPersistFile::Load, takes IPropertyStore off it,
+    SetValue + Commit + Save - the sequence Microsoft's own shortcut samples
+    use, because only the ShellLink object is known to carry this property
+    through to the file.  Everything lives inside this function: its own
+    apartment, its own releases, and every failure answers False rather than
+    raising, so a link that refuses the property still opens and uninstalls
+    and only the toast header stays generic.
+
+    The PROPVARIANT is built around a Python buffer and is deliberately NOT
+    PropVariantClear'd - that would CoTaskMemFree memory Python owns.  The
+    store copies the string during SetValue, so nothing outlives the call.
+    """
+    from ctypes import wintypes
+
+    ole32 = ctypes.windll.ole32
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    ole32.CoInitializeEx.restype = ctypes.c_long
+    ole32.CoCreateInstance.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                       ctypes.c_ulong, ctypes.c_void_p,
+                                       ctypes.c_void_p]
+    ole32.CoCreateInstance.restype = ctypes.c_long
+    ole32.CoUninitialize.argtypes = []
+    try:
+        g_cls = _guid("{00021401-0000-0000-C000-000000000046}")   # ShellLink
+        g_link = _guid("{000214F9-0000-0000-C000-000000000046}")  # IShellLinkW
+        g_persist = _guid("{0000010b-0000-0000-C000-000000000046}")
+        g_store = _guid(_IID_PROPERTY_STORE)
+
+        hr = ole32.CoInitializeEx(None, 2)          # COINIT_APARTMENTTHREADED
+        owns_apartment = hr in (0, 1)
+        link = ctypes.c_void_p()
+        store = ctypes.c_void_p()
+        persist = ctypes.c_void_p()
+        try:
+            hr = ole32.CoCreateInstance(ctypes.byref(g_cls), None, 0x1,
+                                        ctypes.byref(g_link),
+                                        ctypes.byref(link))
+            if hr != 0 or not link.value:
+                return False
+
+            def fn(index, restype, *argtypes):
+                proto = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p,
+                                           *argtypes)
+                return proto(_vt(link, index))
+
+            HRESULT = ctypes.c_long
+            # IPersistFile: QI 0-2, GetClassID 3, IsDirty 4, Load 5, Save 6
+            if fn(0, HRESULT, ctypes.c_void_p, ctypes.c_void_p)(
+                    link, ctypes.byref(g_persist),
+                    ctypes.byref(persist)) != 0 or not persist.value:
+                return False
+            save_proto = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p,
+                                            ctypes.c_wchar_p,
+                                            wintypes.BOOL)
+            load = save_proto(_vt(persist, 5))
+            if load(persist, link_path, 0x2) != 0:          # STGM_READWRITE
+                return False
+            if fn(0, HRESULT, ctypes.c_void_p, ctypes.c_void_p)(
+                    link, ctypes.byref(g_store),
+                    ctypes.byref(store)) != 0 or not store.value:
+                return False
+            setvalue = ctypes.WINFUNCTYPE(
+                ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p,
+                ctypes.c_void_p)(_vt(store, 6))
+            commit = ctypes.WINFUNCTYPE(ctypes.c_long,
+                                        ctypes.c_void_p)(_vt(store, 7))
+            key = _aumid_key()
+            pv = _PROPVARIANT()
+            pv.vt = _VT_LPWSTR
+            buf = ctypes.create_unicode_buffer(appid)
+            pv.pwszVal = ctypes.cast(buf, ctypes.c_void_p)
+            if setvalue(store, ctypes.byref(key), ctypes.byref(pv)) != 0:
+                return False
+            if commit(store) != 0:
+                return False
+            if save_proto(_vt(persist, 6))(persist, link_path,
+                                           True) != 0:        # Save
+                return False
+            _notify_shell(link_path)
+            return True
+        finally:
+            for ptr, index in ((store, 2), (persist, 2), (link, 2)):
+                if ptr.value:
+                    try:
+                        release = ctypes.WINFUNCTYPE(
+                            ctypes.c_long,
+                            ctypes.c_void_p)(_vt(ptr, index))
+                        release(ptr)
+                    except Exception:
+                        pass
+            if owns_apartment:
+                try:
+                    ole32.CoUninitialize()
+                except Exception:
+                    pass
+    except Exception:
+        return False
+
+
+def _shortcut_aumid(link_path):
+    """The AppUserModelID a .lnk already carries, or None.  Read only."""
+    from ctypes import wintypes
+
+    ole32 = ctypes.windll.ole32
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    ole32.CoInitializeEx.restype = ctypes.c_long
+    ole32.CoCreateInstance.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                       ctypes.c_ulong, ctypes.c_void_p,
+                                       ctypes.c_void_p]
+    ole32.CoCreateInstance.restype = ctypes.c_long
+    ole32.PropVariantClear.argtypes = [ctypes.c_void_p]
+    ole32.PropVariantClear.restype = ctypes.c_long
+    ole32.CoUninitialize.argtypes = []
+    try:
+        g_cls = _guid("{00021401-0000-0000-C000-000000000046}")
+        g_link = _guid("{000214F9-0000-0000-C000-000000000046}")
+        g_persist = _guid("{0000010b-0000-0000-C000-000000000046}")
+        g_store = _guid(_IID_PROPERTY_STORE)
+
+        hr = ole32.CoInitializeEx(None, 2)
+        owns_apartment = hr in (0, 1)
+        link = ctypes.c_void_p()
+        store = ctypes.c_void_p()
+        persist = ctypes.c_void_p()
+        pv = _PROPVARIANT()
+        try:
+            hr = ole32.CoCreateInstance(ctypes.byref(g_cls), None, 0x1,
+                                        ctypes.byref(g_link),
+                                        ctypes.byref(link))
+            if hr != 0 or not link.value:
+                return None
+
+            def fn(index, restype, *argtypes):
+                proto = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p,
+                                           *argtypes)
+                return proto(_vt(link, index))
+
+            HRESULT = ctypes.c_long
+            if fn(0, HRESULT, ctypes.c_void_p, ctypes.c_void_p)(
+                    link, ctypes.byref(g_persist),
+                    ctypes.byref(persist)) != 0 or not persist.value:
+                return None
+            load = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p,
+                                      ctypes.c_wchar_p,
+                                      wintypes.BOOL)(_vt(persist, 5))
+            if load(persist, link_path, 0) != 0:              # STGM_READ
+                return None
+            if fn(0, HRESULT, ctypes.c_void_p, ctypes.c_void_p)(
+                    link, ctypes.byref(g_store),
+                    ctypes.byref(store)) != 0 or not store.value:
+                return None
+            getvalue = ctypes.WINFUNCTYPE(
+                ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p,
+                ctypes.c_void_p)(_vt(store, 5))
+            key = _aumid_key()
+            if getvalue(store, ctypes.byref(key),
+                        ctypes.byref(pv)) != 0 or pv.vt != _VT_LPWSTR \
+                    or not pv.pwszVal:
+                return None
+            # The store allocated this string, so it must be cleared - the
+            # opposite of _set_shortcut_aumid's Python-owned buffer.
+            return ctypes.wstring_at(pv.pwszVal)
+        finally:
+            if pv.vt == _VT_LPWSTR and pv.pwszVal:
+                try:
+                    ole32.PropVariantClear(ctypes.byref(pv))
+                except Exception:
+                    pass
+            for ptr in (store, persist, link):
+                if ptr.value:
+                    try:
+                        release = ctypes.WINFUNCTYPE(
+                            ctypes.c_long,
+                            ctypes.c_void_p)(_vt(ptr, 2))
+                        release(ptr)
+                    except Exception:
+                        pass
+            if owns_apartment:
+                try:
+                    ole32.CoUninitialize()
+                except Exception:
+                    pass
+    except Exception:
+        return None
+
+
+def aumid_needs_stamp(current, target):
+    """True when a link's AUMID is missing or is not the toast's app id.
+
+    Pure so the selftest can pin the rule: a fresh link carries no AUMID,
+    an older build's link carries none either, and a link stamped with any
+    other string (a portable run's path, say) does not match the id
+    toast_app_id reports while the registry lists Raze.
+    """
+    return (current or "") != (target or "")
+
+
+def icon_needs_fix(current, target):
+    """True when a link's icon location is not the target's own icon.
+
+    Pure so the selftest can pin the rule.  The shell reads an icon
+    location as two halves - a path and an index - and a link written
+    before the fix carried the index glued onto the path: a file named
+    "Raze.exe,0" that does not exist, so the shell drew a blank page
+    (the white document in the toast header, and on the Start Menu and
+    Desktop links).  An unreadable location counts as wrong; the write
+    that follows is best effort too.  A blank path would resolve - the
+    shell falls back to the target - but our links always spell the
+    target out, so anything that is not exactly (target, 0) is
+    rewritten once and then left alone.
+    """
+    if not current:
+        return True
+    path, index = current
+    return (path or "") != (target or "") or index != 0
+
+
+def _shortcut_icon(link_path):
+    """The icon location a .lnk already carries as (path, index), or None.
+
+    Read only.  GetIconLocation is IShellLinkW slot 16 - the pair of
+    SetIconLocation's 17 - and answers the two halves separately, a path
+    and an index (ShObjIdl_core.h, counted from QI/AddRef/Release at
+    0-2).  Anything that fails is None: a missing link, an unreadable
+    one, or a link that sets no icon at all.
+    """
+    from ctypes import wintypes
+
+    ole32 = ctypes.windll.ole32
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    ole32.CoInitializeEx.restype = ctypes.c_long
+    ole32.CoCreateInstance.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                       ctypes.c_ulong, ctypes.c_void_p,
+                                       ctypes.c_void_p]
+    ole32.CoCreateInstance.restype = ctypes.c_long
+    ole32.CoUninitialize.argtypes = []
+    try:
+        g_cls = _guid("{00021401-0000-0000-C000-000000000046}")
+        g_link = _guid("{000214F9-0000-0000-C000-000000000046}")
+        g_persist = _guid("{0000010b-0000-0000-C000-000000000046}")
+
+        hr = ole32.CoInitializeEx(None, 2)
+        owns_apartment = hr in (0, 1)
+        link = ctypes.c_void_p()
+        persist = ctypes.c_void_p()
+        try:
+            hr = ole32.CoCreateInstance(ctypes.byref(g_cls), None, 0x1,
+                                        ctypes.byref(g_link),
+                                        ctypes.byref(link))
+            if hr != 0 or not link.value:
+                return None
+
+            def fn(index, restype, *argtypes):
+                proto = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p,
+                                           *argtypes)
+                return proto(_vt(link, index))
+
+            HRESULT = ctypes.c_long
+            if fn(0, HRESULT, ctypes.c_void_p, ctypes.c_void_p)(
+                    link, ctypes.byref(g_persist),
+                    ctypes.byref(persist)) != 0 or not persist.value:
+                return None
+            load = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p,
+                                      ctypes.c_wchar_p,
+                                      wintypes.BOOL)(_vt(persist, 5))
+            if load(persist, link_path, 0) != 0:              # STGM_READ
+                return None
+            path = ctypes.create_unicode_buffer(260)          # MAX_PATH
+            index = ctypes.c_int(-1)
+            if fn(16, HRESULT, ctypes.c_wchar_p, ctypes.c_int,
+                  ctypes.POINTER(ctypes.c_int))(                # GetIconLocation
+                    link, path, 260, ctypes.byref(index)) != 0:
+                return None
+            return (path.value, index.value)
+        finally:
+            for ptr in (persist, link):
+                if ptr.value:
+                    try:
+                        release = ctypes.WINFUNCTYPE(
+                            ctypes.c_long,
+                            ctypes.c_void_p)(_vt(ptr, 2))
+                        release(ptr)
+                    except Exception:
+                        pass
+            if owns_apartment:
+                try:
+                    ole32.CoUninitialize()
+                except Exception:
+                    pass
+    except Exception:
+        return None
+
+
+def _set_shortcut_icon(link_path, path, index):
+    """Rewrite a .lnk's icon location.  Best effort: True if written.
+
+    The same open sequence as _set_shortcut_aumid - IPersistFile::Load,
+    the change through the ShellLink object, then Save - because only
+    the ShellLink object carries a change through to the file.  The path
+    and the index are two arguments (slot 17), never one "path,index"
+    string.  A successful write is followed by _notify_shell so caches
+    holding the old icon drop it instead of showing a blank page until
+    something else invalidates them.  Every failure answers False
+    rather than raising: a link that refuses the rewrite still opens
+    and uninstalls, only its icon stays wrong.
+    """
+    from ctypes import wintypes
+
+    ole32 = ctypes.windll.ole32
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    ole32.CoInitializeEx.restype = ctypes.c_long
+    ole32.CoCreateInstance.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                       ctypes.c_ulong, ctypes.c_void_p,
+                                       ctypes.c_void_p]
+    ole32.CoCreateInstance.restype = ctypes.c_long
+    ole32.CoUninitialize.argtypes = []
+    try:
+        g_cls = _guid("{00021401-0000-0000-C000-000000000046}")
+        g_link = _guid("{000214F9-0000-0000-C000-000000000046}")
+        g_persist = _guid("{0000010b-0000-0000-C000-000000000046}")
+
+        hr = ole32.CoInitializeEx(None, 2)          # COINIT_APARTMENTTHREADED
+        owns_apartment = hr in (0, 1)
+        link = ctypes.c_void_p()
+        persist = ctypes.c_void_p()
+        try:
+            hr = ole32.CoCreateInstance(ctypes.byref(g_cls), None, 0x1,
+                                        ctypes.byref(g_link),
+                                        ctypes.byref(link))
+            if hr != 0 or not link.value:
+                return False
+
+            def fn(index, restype, *argtypes):
+                proto = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p,
+                                           *argtypes)
+                return proto(_vt(link, index))
+
+            HRESULT = ctypes.c_long
+            # IPersistFile: QI 0-2, GetClassID 3, IsDirty 4, Load 5, Save 6
+            if fn(0, HRESULT, ctypes.c_void_p, ctypes.c_void_p)(
+                    link, ctypes.byref(g_persist),
+                    ctypes.byref(persist)) != 0 or not persist.value:
+                return False
+            persist_proto = ctypes.WINFUNCTYPE(ctypes.c_long,
+                                               ctypes.c_void_p,
+                                               ctypes.c_wchar_p,
+                                               wintypes.BOOL)
+            if persist_proto(_vt(persist, 5))(
+                    persist, link_path, 0x2) != 0:    # STGM_READWRITE
+                return False
+            if fn(17, HRESULT, ctypes.c_wchar_p, ctypes.c_int)(  # SetIconLocation
+                    link, path, index) != 0:
+                return False
+            if persist_proto(_vt(persist, 6))(persist, link_path,
+                                              True) != 0:        # Save
+                return False
+            _notify_shell(link_path)
+            return True
+        finally:
+            for ptr in (persist, link):
+                if ptr.value:
+                    try:
+                        release = ctypes.WINFUNCTYPE(
+                            ctypes.c_long,
+                            ctypes.c_void_p)(_vt(ptr, 2))
+                        release(ptr)
+                    except Exception:
+                        pass
+            if owns_apartment:
+                try:
+                    ole32.CoUninitialize()
+                except Exception:
+                    pass
+    except Exception:
+        return False
+
+
+def aumid_registry_plan(appid, icon):
+    """(subkey, values) for the toast header's name and tile.
+
+    Pure so the selftest can pin it.  The header's attribution area is
+    shell-controlled and cannot be set from the toast payload, and for
+    an unpackaged app the shell reads it from
+    HKCU\\Software\\Classes\\AppUserModelId\\<AUMID> - the DisplayName +
+    IconUri registration Firefox and the Community Toolkit write.  Our
+    AUMID is an exe path, and the registry spells a path as nested keys
+    (C: / Users / ...), which is exactly what a reader walking the same
+    string back resolves - and what Windows itself already writes for
+    us under Notifications\\Settings.
+    """
+    values = [("DisplayName", "Raze")]
+    if icon:
+        values.append(("IconUri", icon))
+    return ("Software\\Classes\\AppUserModelId\\" + appid, values)
+
+
+def register_aumid(appid, icon=None):
+    """Write the header registration for an app id, silently.
+
+    Idempotent and best effort: each value is read first and written
+    only on a disagreement, so the steady state writes nothing and no
+    failure ever reaches the UI - the worst case is the generic header
+    this exists to fix.  Install/repair worker threads only, never Tk.
+    """
+    import winreg
+
+    subkey, values = aumid_registry_plan(appid, icon)
+    try:
+        key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, subkey, 0,
+                                 winreg.KEY_SET_VALUE
+                                 | winreg.KEY_QUERY_VALUE)
+        try:
+            for name, data in values:
+                try:
+                    current = winreg.QueryValueEx(key, name)[0]
+                except OSError:
+                    current = None
+                if current != data:
+                    winreg.SetValueEx(key, name, 0, winreg.REG_SZ, data)
+        finally:
+            winreg.CloseKey(key)
+    except OSError:
+        pass
+
+
+def _unregister_aumid(appid):
+    """Remove the header registration, pruning empty parents.
+
+    The key is a path-shaped chain (aumid_registry_plan), so the leaf
+    goes first and each parent only while it is empty - another app's
+    chain sharing the "C:" prefix stops the walk, and the
+    AppUserModelId root itself is never touched.  Best effort: an
+    uninstall never fails over a header key.
+    """
+    import winreg
+
+    root = "Software\\Classes\\AppUserModelId"
+    parts = (root + "\\" + appid).split("\\")
+    try:
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, "\\".join(parts))
+    except OSError:
+        return
+    for depth in range(len(parts) - 1, len(root.split("\\")), -1):
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 "\\".join(parts[:depth]), 0,
+                                 winreg.KEY_READ)
+            subkeys, values, _ = winreg.QueryInfoKey(key)
+            winreg.CloseKey(key)
+            if subkeys or values:
+                return
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER,
+                             "\\".join(parts[:depth]))
+        except OSError:
+            return
+
+
+def repair_shortcuts():
+    """Stamp installed links' AUMID, fix their icon, register the header.
+
+    Silent and idempotent.  Runs once per launch from _auto_install on a
+    worker thread - file, COM and registry work, never Tk.  Reads each
+    link first and writes only a disagreement, so the steady state opens
+    two links and writes nothing; a failure on one link never stops the
+    other and never reaches the UI.
+
+    All three repairs decide the toast header: Windows draws the banner's
+    name and tile from the Start Menu link whose AppUserModelID matches
+    the toast's app id, and that tile is the link's own icon - which
+    every link written before the icon fix carried as a file named
+    "Raze.exe,0", so the shell drew a blank page instead of the emblem.
+    The attribution area itself is shell-controlled and cannot come from
+    the payload: an unpackaged app names it with DisplayName/IconUri in
+    the AUMID registration, which no build ever wrote.
+    """
+    plan = install_plan()
+    for link in plan["links"]:
+        try:
+            if not os.path.exists(link):
+                continue
+            if aumid_needs_stamp(_shortcut_aumid(link), plan["target"]):
+                _set_shortcut_aumid(link, plan["target"])
+            if icon_needs_fix(_shortcut_icon(link), plan["target"]):
+                _set_shortcut_icon(link, plan["target"], 0)
+        except Exception:
+            pass
+    register_aumid(toast_app_id(), toast_icon_path())
 
 
 def _write_uninstall_entry(plan):
@@ -847,7 +1417,7 @@ def do_install():
     for link in plan["links"]:
         try:
             _create_shortcut(link, plan["target"], plan["dir"],
-                             plan["target"] + ",0", INSTALL_DESC)
+                             plan["target"], INSTALL_DESC)
             made.append(link)
         except Exception as e:
             _forget_links(made)
@@ -858,6 +1428,10 @@ def do_install():
         _remove_uninstall_entry()
         _forget_links(made)
         return False, "could not register Raze: %s" % e
+    # the header registration rides along with the install, so the very
+    # first launch after it can already toast with an icon source;
+    # best effort like the link stamps - it never fails an install
+    register_aumid(plan["target"], toast_icon_path())
     return True, ""
 
 
@@ -871,6 +1445,7 @@ def do_uninstall():
 
     plan = install_plan()
     _remove_uninstall_entry()
+    _unregister_aumid(plan["target"])
     _forget_links(plan["links"])
     target, directory = plan["target"], plan["dir"]
     if _same_file(running_exe(), target):
@@ -1455,12 +2030,66 @@ def _xml_text(s):
             .replace("'", "&apos;"))
 
 
+def toast_icon_path():
+    """A PNG for the toast's app-logo slot, unpacked once and cached.
+
+    Windows draws a banner's header icon by resolving the AppID through
+    a Start Menu shortcut's AUMID, and the AppID we pass is the exe
+    path - which no shortcut matches - so the banner came up with a
+    generic page instead of the Raze tile.  The payload can carry its
+    own logo (ppLogoOverride), so the largest PNG frame of raze.ico
+    (every frame build_assets writes is PNG-encoded) is unpacked to one
+    fixed file in %TEMP% and referenced as a file URI: one path forever,
+    same capped-cache rule as the update download, and the file is
+    rewritten whenever the bundled frame's size stops matching it, so a
+    rebuilt icon can never go stale.  No icon ever blocks a toast:
+    None simply omits the image and the banner goes out as it always did.
+    """
+    base = (os.environ.get("TEMP") or os.environ.get("TMP")
+            or os.environ.get("LOCALAPPDATA") or ".")
+    dst = os.path.join(base, "Raze-toast-icon.png")
+    try:
+        with open(resource_path("raze.ico"), "rb") as fh:
+            data = fh.read()
+        count = struct.unpack_from("<H", data, 4)[0]
+        off = length = 0
+        for i in range(count):
+            _w, _h, _c, _r, _pl, _bp, ln, at = struct.unpack_from(
+                "<BBBBHHII", data, 6 + 16 * i)
+            # the biggest PNG-encoded frame (256 px); a raw bitmap frame
+            # is skipped - the payload needs a decodable image
+            if ln > length and data[at:at + 8] == b"\x89PNG\r\n\x1a\n":
+                off, length = at, ln
+        if not length:
+            return None
+        if not (os.path.isfile(dst) and os.path.getsize(dst) == length):
+            tmp = dst + ".new"
+            with open(tmp, "wb") as fh:
+                fh.write(data[off:off + length])
+            os.replace(tmp, dst)
+        return dst
+    except Exception:
+        return None
+
+
 def toast_xml(title, body):
-    """The toast payload: one title line, one body line, no chrome."""
+    """The payload: one title line, one body line, the Raze tile as logo.
+
+    The image sits in the app-logo slot - the header's own icon -
+    because Windows resolves an app's icon through a Start Menu
+    shortcut's AUMID that an exe-path AppID never matches (see
+    toast_icon_path).  No icon found: the banner goes out exactly as it
+    did before.
+    """
+    image = ""
+    icon = toast_icon_path()
+    if icon:
+        image = ('<image placement="appLogoOverride" alt="Raze" src="%s"/>'
+                 % _xml_text(Path(icon).resolve().as_uri()))
     return ('<toast><visual><binding template="ToastGeneric">'
-            '<text>%s</text><text>%s</text>'
+            '<text>%s</text><text>%s</text>%s'
             '</binding></visual></toast>') % (_xml_text(title),
-                                             _xml_text(body))
+                                             _xml_text(body), image)
 
 
 _winrt_started = False
@@ -2453,9 +3082,13 @@ class AutoTyper:
         """
         window = window or self.root
         try:
-            # proper app identity -> taskbar uses the shortcut's name + icon
+            # one id for process, links and toasts: the taskbar then
+            # groups under the shortcut's name and icon, and the
+            # notification platform resolves the banner's header from
+            # that same id's registration - a string matching nothing
+            # left the header with no icon source at all
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "Raze.AutoTyper.1")
+                toast_app_id())
         except Exception:
             pass
         try:
@@ -4002,13 +4635,34 @@ class AutoTyper:
         list of reasons not to.  Success is silent: the copy simply
         carries on as an installed program.  A failure reaches the
         heartbeat, which shows the box.
+
+        When there is nothing to install - Windows already lists Raze -
+        the links may still predate the AUMID stamp and the icon fix and
+        keep the toast header generic, so the repair runs instead:
+        worker thread, silent, idempotent (see repair_shortcuts).
         """
         try:
             if not install_needed(running_exe(), registry_installed()):
+                # Nothing to install, but the links may predate the AUMID
+                # stamp and the icon fix - repair them.  Through the
+                # method so a harness can replace it: the thread below
+                # reads and possibly rewrites the real Start Menu and
+                # Desktop links, and no test may do that.
+                self._repair_shortcuts()
                 return
             self._install_now()
         except Exception:
             pass
+
+    def _repair_shortcuts(self):
+        """Repair installed links on a worker thread.  Silent.
+
+        File and COM work, never Tk - same rule as _install_now.  The
+        target does the actual work (repair_shortcuts) and swallows
+        every failure; this only moves it off the UI thread.
+        """
+        threading.Thread(target=repair_shortcuts,
+                         name="shortcuts", daemon=True).start()
 
     def _install_now(self):
         """Copy Raze into place on a worker thread; the heartbeat reports.
