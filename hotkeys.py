@@ -106,12 +106,23 @@ class HotkeyListener:
 
     def stop(self):
         self._stop.set()
+        self._join()
         if self._listener is not None:
             try:
                 self._listener.stop()
             except Exception:
                 pass
             self._listener = None
+
+    def _join(self):
+        """Wait for the poll thread to leave. Never from inside itself."""
+        thread = self._thread
+        self._thread = None
+        if thread is not None and thread is not threading.current_thread():
+            try:
+                thread.join(timeout=0.5)
+            except Exception:
+                pass
 
     def _restart(self):
         if self._listener is not None:
@@ -120,10 +131,20 @@ class HotkeyListener:
             except Exception:
                 pass
             self._listener = None
-        self._stop.clear()
         self._pressed.clear()
         self._poll_prev.clear()
         if not self._bindings:
+            # Nothing left to watch: let the poll thread leave and wait for
+            # it, so the next binding starts exactly one fresh thread.
+            self._stop.set()
+            self._join()
+            return
+        # The loop reads _bindings live, so a rebind needs no new thread -
+        # starting one anyway is what used to stack pollers: four
+        # registrations plus start() made five threads at launch and every
+        # rebind added another, each polling GetAsyncKeyState at 8 ms for
+        # the life of the app.
+        if self._thread is not None and self._thread.is_alive():
             return
         # The win32 poll is used on purpose: pynput's windows backend spins
         # on the keyboard state in a tight loop, which holds the GIL and
@@ -133,14 +154,22 @@ class HotkeyListener:
         self._start_polling()
 
     def _start_polling(self):
+        # One event per thread: a thread that outlives a join timeout keeps
+        # its own (already set) signal and still leaves, so a later start
+        # can never end up with two pollers running.
+        stop = self._stop = threading.Event()
+
         def loop():
-            while not self._stop.is_set():
-                for hotkey in list(self._bindings):
-                    down = self._state_down(hotkey)
-                    was = self._poll_prev.get(hotkey, False)
-                    self._poll_prev[hotkey] = down
-                    if down and not was:
-                        self._fire(hotkey)
+            while not stop.is_set():
+                try:
+                    for hotkey in list(self._bindings):
+                        down = self._state_down(hotkey)
+                        was = self._poll_prev.get(hotkey, False)
+                        self._poll_prev[hotkey] = down
+                        if down and not was:
+                            self._fire(hotkey)
+                except Exception:
+                    pass  # one bad pass must never cost the hotkeys
                 time.sleep(0.008)
 
         self._thread = threading.Thread(target=loop, daemon=True)
