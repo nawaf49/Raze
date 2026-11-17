@@ -314,9 +314,14 @@ def main():
               not app._updates_banner and app._updates_banner_row is None,
               "flag %s row %s" % (app._updates_banner,
                                   app._updates_banner_row))
-        cw.capture(hwnd, r"C:\Users\nawaf\AppData\Local\Temp\opencode\updates.png")
+        # one real event-loop beat before the capture: update_idletasks()
+        # never processes paint events, so the strip the banner just left
+        # would still carry stale pixels into the screenshot
+        def snap():
+            cw.capture(hwnd, r"C:\Users\nawaf\AppData\Local\Temp\opencode\updates.png")
+            root.after(100, done)
 
-        root.after(200, done)
+        root.after(100, snap)
 
     def done():
         try:
