@@ -1,8 +1,8 @@
 # UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 21, 0, 0),
-    prodvers=(1, 21, 0, 0),
+    filevers=(1, 22, 0, 0),
+    prodvers=(1, 22, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,11 +17,11 @@ VSVersionInfo(
           '040904B0',
           [StringStruct('CompanyName', 'Raze'),
            StringStruct('FileDescription', 'Raze'),
-           StringStruct('FileVersion', '1.21.0.0'),
+           StringStruct('FileVersion', '1.22.0.0'),
            StringStruct('InternalName', 'Raze'),
            StringStruct('OriginalFilename', 'Raze.exe'),
            StringStruct('ProductName', 'Raze'),
-           StringStruct('ProductVersion', '1.21.0.0')])
+           StringStruct('ProductVersion', '1.22.0.0')])
         ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]
