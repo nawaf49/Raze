@@ -4069,11 +4069,13 @@ class AutoTyper:
         for k, (item, x0, x1) in self._tab_items.items():
             item.set_color(TEXT if k == key else MUTED)
         mid = (self._tab_items[key][1] + self._tab_items[key][2]) // 2
-        for k, view in self._views.items():
-            if k == key:
-                view.lift()
-            else:
-                view.lower()
+        # Only the lift.  Lowering the others was the switch's pause on
+        # the whole screen: dropping a view repaints it *and* everything
+        # it had been covering - a hundred-odd widgets on every click.
+        # The lifted view covers the stack as it stands, because every
+        # view is a full-size panel painted in the window's own black,
+        # so what lies underneath can never show through.
+        self._views[key].lift()
         if key == "history":
             self._refresh_history()
         elif key == "updates":
@@ -4474,6 +4476,8 @@ class AutoTyper:
         self._history_rows = []
         self._history_days = []
         self._history_note = None
+        # what the packed rows currently show - see _render_history
+        self._history_sig = None
         return view
 
     def _render_history(self):
@@ -4486,16 +4490,7 @@ class AutoTyper:
         counts every message ever sent.
         """
         try:
-            for row, _date, _count in self._history_rows:
-                try:
-                    row.destroy()
-                except Exception:
-                    pass
-            self._history_rows = []
-
             days = self._history_days
-            if not days:
-                return
             row_h, gap = 34, 12                     # pitch and spacing
             try:
                 room = self.history_list.winfo_height()
@@ -4507,6 +4502,28 @@ class AutoTyper:
                 # the tab has never been drawn, so the panel has no height
                 # yet - draw a sensible amount and redraw once it does
                 max_rows = 14
+
+            # The rows this pass would draw, counts and all: when they are
+            # the rows already packed, reopening the tab has nothing to do.
+            # It used to destroy and rebuild every one of them - the pause
+            # a switch put on the screen - and the after_idle pass lands
+            # here too and stands down the same way when the height it was
+            # waiting for changed nothing.
+            drawn = tuple((day, self.daily.get(day, 0))
+                          for day in days[:max_rows])
+            if drawn and drawn == getattr(self, "_history_sig", None) \
+                    and self._history_rows:
+                return
+
+            for row, _date, _count in self._history_rows:
+                try:
+                    row.destroy()
+                except Exception:
+                    pass
+            self._history_rows = []
+            if not days:
+                self._history_sig = ()
+                return
 
             for day in days[:max_rows]:
                 row = tk.Frame(self.history_list, bg=FIELD)
@@ -4521,6 +4538,7 @@ class AutoTyper:
                     size=12, color=FAINT, height=22, anchor="e", bg=FIELD)
                 count.pack(side="right")
                 self._history_rows.append((row, date, count))
+            self._history_sig = drawn
         except Exception:
             pass
 
@@ -4557,17 +4575,15 @@ class AutoTyper:
         """One row per day: the full date and how many messages went out."""
         if not hasattr(self, "history_list"):
             return
-        if self._history_note is not None:
-            try:
-                self._history_note.destroy()
-            except Exception:
-                pass
-            self._history_note = None
-
         total = sum(self.daily.values())
         self.history_total.set_text(f"{total} message{'s' if total != 1 else ''}")
 
         if not self.history:
+            # The note is the whole list while there is nothing to show,
+            # and its words never change: while it stands, reopening the
+            # tab has nothing to redraw.
+            if self._history_note is not None:
+                return
             for row, _date, _count in self._history_rows:
                 try:
                     row.destroy()
@@ -4588,6 +4604,12 @@ class AutoTyper:
                        bg=FIELD).pack(anchor="w")
             return
 
+        if self._history_note is not None:
+            try:
+                self._history_note.destroy()
+            except Exception:
+                pass
+            self._history_note = None
         self._history_days = sorted(self.daily, reverse=True)
         self._render_history()
         # the panel only knows its real height once it has been laid out, so
@@ -4644,6 +4666,8 @@ class AutoTyper:
         self.updates_list.pack(side="left", fill="both", expand=True,
                                padx=12, pady=12)
         self._updates_rows = []
+        # what the packed rows currently show - see _render_updates
+        self._updates_sig = None
         return view
 
     def _render_updates(self):
@@ -4660,6 +4684,26 @@ class AutoTyper:
         if not hasattr(self, "updates_list"):
             return
         try:
+            row_h, gap = 34, 12                     # pitch and spacing
+            room = self.updates_list.winfo_height()
+            if room > px(20):
+                max_rows = max(1, int(room) // px(row_h + gap))
+            else:
+                # never laid out yet - a sensible amount, redrawn once it
+                # has been (UPDATES is short enough that this is all of it)
+                max_rows = 14
+            # The banner takes one slot of the budget, so it belongs to
+            # the question "would this pass draw the same list" - asked
+            # before anything is destroyed, so a visit with nothing new
+            # leaves the rows standing (and the after_idle pass stands
+            # down with them when the height it waits for changed nothing).
+            if self._updates_banner:
+                max_rows = max(1, max_rows - 1)
+            drawn = (self._updates_banner, tuple(UPDATES[:max_rows]))
+            if drawn == getattr(self, "_updates_sig", None) \
+                    and self._updates_rows:
+                return
+
             for row, _tag, _line in self._updates_rows:
                 try:
                     row.destroy()
@@ -4673,15 +4717,6 @@ class AutoTyper:
                 except Exception:
                     pass
             self._updates_banner_row = None
-
-            row_h, gap = 34, 12                     # pitch and spacing
-            room = self.updates_list.winfo_height()
-            if room > px(20):
-                max_rows = max(1, int(room) // px(row_h + gap))
-            else:
-                # never laid out yet - a sensible amount, redrawn once it
-                # has been (UPDATES is short enough that this is all of it)
-                max_rows = 14
 
             # Every body in the list starts on one x.  "1.xx" tags are all
             # naturally the same width, but the banner's tag is a word -
@@ -4726,7 +4761,6 @@ class AutoTyper:
                     anchor="w", bg=FIELD)
                 body.grid(row=0, column=1, sticky="w", padx=(18, 0))
                 self._updates_banner_row = (brow, tag, body)
-                max_rows = max(1, max_rows - 1)
 
             for version, line in UPDATES[:max_rows]:
                 row = tk.Frame(self.updates_list, bg=FIELD)
@@ -4736,6 +4770,7 @@ class AutoTyper:
                                   anchor="w", bg=FIELD)
                 body.grid(row=0, column=1, sticky="w", padx=(18, 0))
                 self._updates_rows.append((row, tag, body))
+            self._updates_sig = drawn
         except Exception:
             pass
 

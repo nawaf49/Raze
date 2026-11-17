@@ -410,8 +410,8 @@ polish on an already-done turn, so no click is ever delayed by it.
   start on one x, and layout_check asserts exactly that.
 - `_tab_anim` is a token: every switch supersedes a travel in flight, so
   rapid clicking starts each trip from wherever the last one reached, and
-  the view that wins is always raised *from* the offset (it is lowered
-  while it loses, so the snap is never seen). A losing view settles to
+  the view that wins is always raised *from* the offset (it stays beneath
+  the winner while it loses, so the snap is never seen). A losing view settles to
   zero the next time it opens.
 - Two guards hand straight to the settled positions: Windows' "turn off
   unnecessary animations" (`reduce_motion_enabled`) and the opening
