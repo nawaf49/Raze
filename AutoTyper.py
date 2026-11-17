@@ -221,7 +221,7 @@ INTRO_MOVE_MS = 380          # how long one element takes to travel
 INTRO_STAGGER_MS = 55        # the beat between one card and the next
 INTRO_RISE = 18              # how far a card comes up from
 INTRO_DROP = -10             # how far the nav comes down from
-INTRO_FRAME_MS = 16          # ~60 fps
+INTRO_FRAME_MS = 8           # requested frame period (see TAB_FRAME_MS)
 
 # --- tab switching --------------------------------------------------------- #
 # The underline travels to the chosen tab while the view rises into place.
@@ -230,7 +230,14 @@ INTRO_FRAME_MS = 16          # ~60 fps
 # animations" is honoured the same way the opening sequence honours it.
 TAB_MOVE_MS = 170            # how long one trip takes
 TAB_RISE = 10                # how far the view comes up from
-TAB_FRAME_MS = 16            # ~60 fps
+# The frame period is requested at 8 ms, not 16.  Measured on this Windows,
+# Tk's notifier serves an 8 ms timer on a steady ~15.6 ms cadence, while a
+# 16 ms one is bimodal: 16 ms most frames, ~31 ms on every fourth.  Every
+# animation therefore dropped about a quarter of its frames - a freeze
+# mid-travel - which is the judder the eye reads as "choppy".  The request
+# is finer than the cadence it lands on; elapsed-time progress (every loop
+# here measures its own travel against the clock) keeps the durations exact.
+TAB_FRAME_MS = 8             # steady cadence this lands on: ~16 ms
 TAB_WARM_MS = 1500           # when the off-screen tabs are built ahead
 
 # --- coming back from a minimise -------------------------------------------
@@ -3953,8 +3960,18 @@ class AutoTyper:
             return
         self._pulse_on = True
         self._pulse_i = 0
+        # Each level is held PULSE_MS of wall time, measured against the
+        # clock rather than counted in callbacks: a 45 ms timer is served
+        # bimodally on Windows (45 ms, then ~61 ms), and counted holds made
+        # the breath wobble with it.  The check itself runs on the house
+        # frame period, so a hold lands at the next tick past PULSE_MS -
+        # the same length every time.  perf_counter, not monotonic: on this
+        # platform monotonic reads at the 15.6 ms system tick (7 distinct
+        # values in 100 ms against 314k), so a due-time built from it could
+        # open 15 ms early or late and the breath wobbled with it.
+        self._pulse_due = time.perf_counter() + PULSE_MS / 1000.0
         try:
-            self.root.after(PULSE_MS, self._pulse_step)
+            self.root.after(TAB_FRAME_MS, self._pulse_step)
         except Exception:
             self._pulse_on = False
 
@@ -3965,6 +3982,14 @@ class AutoTyper:
         if not self._pulse_on or not self.typing:
             self._pulse_on = False
             return                      # set colour restores the still image
+        now = time.perf_counter()
+        if now < self._pulse_due:
+            try:
+                self.root.after(TAB_FRAME_MS, self._pulse_step)
+            except Exception:
+                self._pulse_on = False
+            return
+        self._pulse_due = now + PULSE_MS / 1000.0
         try:
             targets = self._pulse_build()
             if not targets:
@@ -3976,7 +4001,7 @@ class AutoTyper:
             for widget, frames in targets:
                 widget.show_frame(frames, index)
             self._pulse_i += 1
-            self.root.after(PULSE_MS, self._pulse_step)
+            self.root.after(TAB_FRAME_MS, self._pulse_step)
         except Exception:
             self._pulse_on = False
 
@@ -5582,20 +5607,22 @@ class AutoTyper:
         """
         try:
             rise = px(DIALOG_RISE)
-            steps = max(1, RISE_MS // TAB_FRAME_MS)
+            start = time.perf_counter()
 
-            def frame(i=0):
+            def frame():
                 try:
-                    if reduce_motion_enabled() or i >= steps:
+                    # elapsed-time progress: the trip lasts RISE_MS
+                    # whatever cadence the notifier actually serves
+                    t = (time.perf_counter() - start) * 1000.0 / RISE_MS
+                    if reduce_motion_enabled() or t >= 1.0:
                         dialog.attributes("-alpha", 1.0)
                         dialog.geometry(f"+{x}+{y}")
                         return
-                    t = i / steps
                     e = 1 - (1 - t) ** 3      # ease-out cubic, the house curve
                     dialog.attributes("-alpha", e)
                     dialog.geometry(
                         f"+{x}+{y + int(round(rise * (1 - e)))}")
-                    dialog.after(TAB_FRAME_MS, lambda: frame(i + 1))
+                    dialog.after(TAB_FRAME_MS, frame)
                 except Exception:
                     try:
                         dialog.attributes("-alpha", 1.0)
@@ -5603,7 +5630,7 @@ class AutoTyper:
                     except Exception:
                         pass                 # the dialog is gone
 
-            frame(0)
+            frame()
         except Exception:
             try:
                 dialog.attributes("-alpha", 1.0)
@@ -6003,24 +6030,26 @@ class AutoTyper:
             self._settle_token = getattr(self, "_settle_token", 0) + 1
             token = self._settle_token
             dip = px(POOL_SETTLE_DIP)
-            steps = max(1, RISE_MS // TAB_FRAME_MS)
+            start = time.perf_counter()
 
-            def frame(i=0):
+            def frame():
                 if token != self._settle_token:
                     return                 # a newer switch owns the settle
                 try:
-                    if reduce_motion_enabled() or i >= steps:
+                    # elapsed-time progress: the dip lasts RISE_MS whatever
+                    # cadence the notifier actually serves
+                    t = (time.perf_counter() - start) * 1000.0 / RISE_MS
+                    if reduce_motion_enabled() or t >= 1.0:
                         self.pool.pack_configure(pady=(0, 0))
                         return
-                    t = i / steps
                     e = 1 - (1 - t) ** 3     # ease-out cubic, the house curve
                     self.pool.pack_configure(
                         pady=(int(round(dip * (1 - e))), 0))
-                    self.pool.after(TAB_FRAME_MS, lambda: frame(i + 1))
+                    self.pool.after(TAB_FRAME_MS, frame)
                 except Exception:
                     pass                    # the window is gone
 
-            frame(0)
+            frame()
         except Exception:
             pass
 

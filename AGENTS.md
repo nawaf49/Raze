@@ -449,9 +449,12 @@ validation from a pure `check(text)` that answers
 
 Three dress motions, one contract each, all in the `RISE_MS` block beside
 the restore constants: `RISE_MS = 160`, `DIALOG_RISE = 8`,
-`POOL_SETTLE_DIP = 6`. Frames run on `TAB_FRAME_MS` (16, the house
-cadence) with ease-out cubic — the curve the tab views already rise on —
-and every one of them follows the same three rules:
+`POOL_SETTLE_DIP = 6`. Frames run on `TAB_FRAME_MS` (8 ms requested — an
+`after(16)` is served bimodally on this Windows, ~25% of frames doubled
+to 31 ms, while an 8 ms request lands steady on ~16) with ease-out cubic
+— the curve the tab views already rise on — and progress is elapsed-time,
+so a trip lasts `RISE_MS` at any cadence the notifier serves. Every one
+of them follows the same three rules:
 
 - **The last frame writes the exact final values** (alpha `1.0`,
   `geometry +x+y`, `pady (0, 0)`), never trusting the curve to land on
