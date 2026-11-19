@@ -6504,12 +6504,25 @@ class AutoTyper:
         catches one that was still going.  Best effort throughout: this
         sits inside the stop path, so nothing in it may raise and take
         the status line down with it.
+
+        The span is the app's own uptime, not the run's clock: the tile
+        reads LONGEST UPTIME beside the nav's UPTIME, so a sitting of
+        hours with the window open has to reach the record when the app
+        closes - the run's elapsed, frozen by every pause, never could
+        carry it, and uptime is always at least that long anyway.  A
+        build without the launch stamp falls back to the session clock.
         """
         try:
             stats = getattr(self, "stats", None) or {}
             today = datetime.now().strftime("%Y-%m-%d")
+            up = getattr(self, "_up_since", None)
+            try:
+                span = time.monotonic() - float(up) if up \
+                    else stats.get("elapsed")
+            except (TypeError, ValueError):
+                span = stats.get("elapsed")
             plan = record_plan(self.cfg, [(stats.get("sent"),
-                                           stats.get("elapsed"), today)])
+                                           span, today)])
             if (plan["best_sitting_msgs"]
                     == getattr(self, "best_sitting_msgs", 0)
                     and plan["best_sitting_s"]
