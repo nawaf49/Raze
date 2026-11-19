@@ -7,9 +7,10 @@ real heartbeat and the real worker threads leave behind.
 import os
 import sys
 
-PROJ = r"C:\Users\nawaf\Documents\Default Project"
+PROJ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJ)
-os.environ.setdefault("APPDATA", r"C:\Users\nawaf\AppData\Roaming")
+os.environ.setdefault("APPDATA",
+                      os.path.join(os.path.expanduser("~"), "AppData", "Roaming"))
 
 import time
 

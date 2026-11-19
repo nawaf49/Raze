@@ -4,8 +4,9 @@ import sys
 
 import win32com.client  # pywin32
 
-EXE = r"C:\Users\nawaf\Documents\Default Project\dist\Raze.exe"
-ICON = r"C:\Users\nawaf\Documents\Default Project\assets\raze.ico"
+HERE = os.path.dirname(os.path.abspath(__file__))
+EXE = os.path.join(HERE, "dist", "Raze.exe")
+ICON = os.path.join(HERE, "assets", "raze.ico")
 START_MENU = os.path.join(os.environ["APPDATA"],
                           r"Microsoft\Windows\Start Menu\Programs")
 DESKTOP = os.path.join(os.environ["USERPROFILE"], "Desktop")

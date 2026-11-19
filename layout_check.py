@@ -5,10 +5,14 @@ runs past its own frame is invisible in a screenshot until it is not.
 """
 import os
 import sys
+import tempfile
 
-PROJ = r"C:\Users\nawaf\Documents\Default Project"
+PROJ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJ)
-os.environ.setdefault("APPDATA", r"C:\Users\nawaf\AppData\Roaming")
+os.environ.setdefault("APPDATA",
+                      os.path.join(os.path.expanduser("~"), "AppData", "Roaming"))
+# where this harness drops its screenshots - scratch in %TEMP%, never the repo
+SHOTS = os.path.join(tempfile.gettempdir(), "opencode")
 
 import customtkinter as ctk
 
@@ -150,7 +154,7 @@ def main():
 
     def capture_typer():
         hwnd = int(root.wm_frame(), 16)
-        cw.capture(hwnd, r"C:\Users\nawaf\AppData\Local\Temp\opencode\typer.png")
+        cw.capture(hwnd, os.path.join(SHOTS, "typer.png"))
         root.after(300, open_hotkeys)
 
     def open_hotkeys():
@@ -168,7 +172,7 @@ def main():
                   var.get() if var else var)
 
         hwnd = int(root.wm_frame(), 16)
-        cw.capture(hwnd, r"C:\Users\nawaf\AppData\Local\Temp\opencode\hotkeys.png")
+        cw.capture(hwnd, os.path.join(SHOTS, "hotkeys.png"))
 
         # the card grew again for the fourth row; it must still sit inside
         # the tab, and it must be tall enough to hold every row
@@ -219,7 +223,7 @@ def main():
                            clock.date._text if clock else None))
 
         hwnd = int(root.wm_frame(), 16)
-        cw.capture(hwnd, r"C:\Users\nawaf\AppData\Local\Temp\opencode\history.png")
+        cw.capture(hwnd, os.path.join(SHOTS, "history.png"))
 
         root.after(200, open_updates)
 
@@ -303,7 +307,7 @@ def main():
 
         # the badge state worth an eye: banner on the panel, dot on the bar
         hwnd = int(root.wm_frame(), 16)
-        cw.capture(hwnd, r"C:\Users\nawaf\AppData\Local\Temp\opencode\updates_badge.png")
+        cw.capture(hwnd, os.path.join(SHOTS, "updates_badge.png"))
 
         # coming back is an ordinary visit: nothing left to explain, and
         # the bar returns to how it looks the rest of the time
@@ -318,7 +322,7 @@ def main():
         # never processes paint events, so the strip the banner just left
         # would still carry stale pixels into the screenshot
         def snap():
-            cw.capture(hwnd, r"C:\Users\nawaf\AppData\Local\Temp\opencode\updates.png")
+            cw.capture(hwnd, os.path.join(SHOTS, "updates.png"))
             root.after(100, done)
 
         root.after(100, snap)

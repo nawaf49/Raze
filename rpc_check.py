@@ -9,13 +9,14 @@ exit - not Discord's opinion of them.
 
 import ctypes
 import json
+import os
 import struct
 import sys
 import threading
 import time
 from ctypes import wintypes
 
-PROJ = r"C:\Users\nawaf\Documents\Default Project"
+PROJ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJ)
 
 import rpc
