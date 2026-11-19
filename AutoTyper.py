@@ -301,7 +301,7 @@ HISTORY_KEEP = 200
 # it.  Bump it together with version_info.txt whenever a release ships, and
 # give the new version its line in UPDATES below: selftest holds the two in
 # step, so a bump without the line fails the suite.
-APP_VERSION = "1.23"
+APP_VERSION = "1.24"
 
 # What every release changed, newest first - the Updates tab reads this and
 # nothing else.  One line each, plain words, short enough for the panel: the
@@ -310,6 +310,7 @@ APP_VERSION = "1.23"
 # copy simply shows fewer lines - every entry describes a version at or
 # below the one running.
 UPDATES = (
+    ("1.24", "Longest uptime tracks your time with the app open; tabbing in stops the run."),
     ("1.23", "Animations no longer skip frames, and the app runs lighter in the background."),
     ("1.22", "Switching tabs and jumping between windows no longer stutters."),
     ("1.21", "Rename message lists, records show their date, and the app feels smoother."),
