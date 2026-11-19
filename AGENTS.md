@@ -326,8 +326,19 @@ handed focus to".
 - `_start()` and `_resume()` both take this guard. Resuming begins typing, so
   it needs exactly the protection starting has.
 - Mid-run, `_typing_worker` re-checks **before every message, never during
-  one**. If Raze is in front it sets `_tab_in_stop` and breaks, so a tab-back
-  cannot dump keystrokes into our own message pool.
+  one**, and the wait between messages checks in every `INTERVAL_POLL_S`
+  (100 ms) slice of it. If Raze is in front it sets `_tab_in_stop` and
+  breaks, so a tab-back cannot dump keystrokes into our own message pool.
+  The wait-side check is what bounds the stop: the interval is the user's —
+  200 s is an ordinary setting — so a check that ran only at message
+  boundaries left Raze sitting in front, looking ignored, for as long as
+  that (probed: 4948 ms, exactly one full interval, at a 5 s setting, and
+  no stop at all within 25 s at 200). One slice is the bound now — 53–105
+  ms from the flip to `typing` going False, through the real heartbeat with
+  `is_foreground` answered from a synthetic flag rather than real focus.
+  A stop or pause outranks focus in that loop, and the loop's own end
+  outranks a tab-in: the pass-count break clears `_tab_in_stop` first,
+  because the loop's rule is what ended that run.
 - **A tab-in stop keeps the session.** The heartbeat freezes
   `stats["elapsed"]` the way pause does, calls `_stop()`, and only then sets
   `_tab_stopped = True` — `_stop()` clears it, so the order matters — before
@@ -534,6 +545,17 @@ stalls spread over the first half second.
   approached in 15 drains (worst real: 1235 ms, a one-time warm-views
   build inside the first poll), and lowering it only risks revealing
   mid-paint.
+- **A long first poll is the map's configure cascade, not a stall we can
+  cut.** A faulthandler dump 600 ms into a slow drain parks the main thread
+  inside `ctk_scrollbar._draw` → `update_idletasks`: every `<Configure>` the
+  map produces redraws a CTk widget, whose `_draw` drains idle tasks, which
+  delivers more Configures — the paint done in one nested burst, ours
+  (`on_scroll`, `repaint`) riding along. The one-time `_warm_views` build
+  measures ~160 ms of such a poll, not the bulk (a probe timing it has to
+  wrap the *class*: `__init__` captured the bound method when it scheduled
+  `after(1500, ...)`). Tab switches never reach any of it — `_restore_drain`
+  is armed only by `<Unmap>`/`_launch`/`_minimize` — and a settled process
+  still drains 233–333 ms at rest.
 - **The guards matter more than the drain.** `<Map>` on the root fires for
   every descendant too (the tag is inherited), so `_on_map` returns unless
   `event.widget is self.root`. It also returns unless `_restore_drain` is set
@@ -816,7 +838,14 @@ payload that is unpacked from scratch on every launch.
   Capture is `_record_session()`, called from
   `_stop()` — the single point a session is over, since `_start` only
   ever runs while `not typing` — and from `_on_close()` for one still
-  running; it folds the day's keys in from `daily` and is
+  running; the span it folds is **the app's own uptime**
+  (`time.monotonic() - _up_since`, falling back to the session clock when
+  the stamp is missing or junk), because the tile reads LONGEST UPTIME
+  beside the nav's UPTIME: a nine-hour sitting with the window open has to
+  reach the record when the app closes, and the run's elapsed, frozen by
+  every pause, never could carry it — uptime is always at least that long,
+  so nothing the old fold caught is lost. It folds the day's keys in from
+  `daily` and is
   try/except-guarded (it sits inside the stop path, so
   nothing in it may take the status line down with it) and calls
   `_save_config()` + `_refresh_records()` only when a record actually
