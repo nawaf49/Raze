@@ -1,82 +1,84 @@
-# Raze
+<h1 align="center"><img src="app_icon.png" width="43" align="top" alt=""> Raze</h1>
 
-A Windows auto-typer. Drop a list of messages in, press one key, and it types
-them for you into whatever app you are working in.
+<p align="center">
+  A Windows auto-typer.<br>
+  Put your messages in, press a key, and it types them for you.
+</p>
 
-![Raze](app_icon.png)
+<p align="center">
+  <a href="https://github.com/nawaf49/Raze/releases/latest"><img alt="Downloads" src="https://img.shields.io/github/downloads/nawaf49/Raze/total?style=flat-square&labelColor=22c55e&color=141418"></a>
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-141418?style=flat-square&labelColor=2f6bff&logo=windows11&logoColor=f6f6f8">
+</p>
+
+## Download
+
+[Raze.exe](https://github.com/nawaf49/Raze/releases/latest) - grab it and run it.
+Run it once and Raze installs itself: a shortcut appears in your Start Menu,
+and it shows up in Settings, where the Uninstall button removes it. There is
+nothing to click.
+
+## Keys
+
+| Key | Command |
+| --- | --- |
+| `F8` | Start |
+| `F6` | Pause |
+| `F7` | Resume |
+| `F9` | Stop |
+
+Tab over to your app first, then press `F8`. Raze won't start while its own
+window is in front, and it stops itself if you tab back in. When that
+happens, `F7` continues that same run and `F8` starts a new one.
 
 ## What it does
 
-- **Message pool** - one message per line. Import / export `.txt`, shuffle, clear.
-- **Message interval** - the gap between each message, in seconds.
-- **Loop** - how many times to repeat the pool. `0` is infinite, `1` is a single pass.
-- **Random** - pick the next message at random instead of walking the list.
-- **Four hotkeys** - `F8` start, `F6` pause, `F7` resume, `F9` stop by default,
-  all four changeable on the Hotkeys tab. They are not aliases of each other:
-  pause freezes the clock and keeps your session counters, only resume picks it
-  back up, and stop ends the session so the next start begins a new one. The
-  same split applies after you tab back into Raze: resume continues the run
-  that stopped, start begins a new one.
-- **History** - how many messages went out on every day, grouped by date.
-  It is permanent: it stays until the app data is deleted.
-- **Uptime** - how long Raze has been open, on the top bar. It runs from the
-  moment the app starts and keeps counting through every pause and stop; it
-  only goes back to zero when the app closes.
-- **Updates** - Raze moves itself onto a new version in the background, with
-  nothing to click. The Updates tab lists what every release changed, so a
-  feature that appears on its own always has a line explaining it.
-- **Discord presence** - while Raze runs, your Discord profile shows whether it
-  is typing, paused or idle, the total number of messages ever sent, and a
-  timer of how long Raze has been open - the same uptime clock, so pausing or
-  stopping never resets it. The entry carries a **Get Raze** button to the
-  public repo. It appears whenever Discord is open and takes itself down when
-  Raze closes.
-- Everything is typed with `Enter` afterwards, automatically.
+Raze takes a list of your messages and types them into whatever app is open,
+one at a time, pressing Enter after each one.
 
-A run that ends on its own raises a Windows notification - the loop ran out,
-typing failed, or you tabbed back into Raze (that one names the key that
-continues the run). Pressing stop does not: you already
-know why that one happened.
-
-## Install
-
-Grab `Raze.exe` and run it. It is a single, self-contained file - no folders,
-no runtime, no dependencies.
-
-On its first run Raze installs itself - there is nothing to click. It copies
-to `%LOCALAPPDATA%\Programs\Raze`, puts a shortcut in the Start Menu and on
-the Desktop, and registers in Windows Settings > Apps with a working Uninstall
-button. A file that is already installed never installs again, and a dev run
-never installs at all. Installing and uninstalling never touch
-`%APPDATA%\Raze`: your messages, history and settings outlive the program.
+- On first run Raze installs itself - a Start Menu shortcut and an
+  entry in Settings with a working Uninstall button. Your messages and
+  history stay in your own folder.
+- Put your messages in the box, one per line. Load them from a `.txt` file,
+  save them back, shuffle them, or clear them.
+- Raze keeps several lists of messages at once. Switch between them, add a new
+  one, give it your own name, or delete one from the row under the box -
+  Raze remembers every list.
+- Choose how many seconds pass between messages, and how many times Raze
+  goes through the list. `0` means keep going until you stop it.
+- Turn on random order to send them shuffled instead of top to bottom.
+- Each of the four keys can be changed on the Hotkeys tab.
+- Pause keeps your counters and stops the clock. `F7` picks up where you
+  left off, and `F9` ends the session.
+- Counters never get cut off. When a number is too long for its box, Raze
+  draws it smaller instead of shortening it, so nothing ever ends in `...`
+  however long Raze runs.
+- Raze never types into itself. If it's the window in front it won't start,
+  and it stops if you click back into it.
+- The History tab shows how many messages you sent each day, plus a total
+  for all time, and the date each record was set.
+- The Updates tab lists what each version of Raze changed. Raze updates
+  itself in the background, so this is where you find out what's new.
+- The top bar shows how long Raze has been open. It keeps counting through
+  pauses and stops, and only starts over when you close Raze.
+- If Raze stops without you asking - the list ran out, typing failed, or you
+  clicked back into Raze - you get a Windows notification. Not when you stop
+  it yourself.
 
 ## Screen sizes
 
-Raze measures the screen it opens on and scales the whole window to fit it.
-One factor drives everything - window, cards, text, borders - so nothing is
-cut off at the edges and nothing is left bigger than its box.
+Raze fits itself to your screen: it shrinks or grows the whole window to
+match what your display can show, so nothing gets cut off at the edges. It
+works on screens from 800x600 up to 4K, at 100%, 125% and 150% Windows
+scaling. Anything smaller than 800x600 may not fit.
 
-Verified across the usual Windows modes, from `800x600` up to `3840x2160`
-(4K), at 100%, 125% and 150% display scaling. Below `800x600` the window
-stops shrinking (it would be unusable), so very old or tiny modes may not
-fit.
+## Your data
 
-## Where your data lives
+Everything is saved on your own computer, in `%APPDATA%\Raze` - a folder in
+your user account, not next to the program. You can delete `Raze.exe` and
+nothing is lost.
 
-Raze stores its settings and history **in your own user profile**, never next
-to the executable:
-
-```
-%APPDATA%\Raze\config.json
-```
-
-(`C:\Users\<you>\AppData\Roaming\Raze\config.json`)
-
-That means:
-
-- every person on the machine gets their own separate Raze data
-- deleting `Raze.exe` does **not** delete your history
-- if you want to wipe it, delete `%APPDATA%\Raze` yourself
+Your messages and settings are saved as you change them, so nothing is lost
+even if Raze closes unexpectedly.
 
 ## Build from source
 
@@ -114,7 +116,7 @@ it, about 700 KB all told. None of these modules is ever imported at runtime;
 excluding them costs nothing and pins the payload.
 
 `python make_shortcut.py` then drops a Start Menu and Desktop shortcut - a
-dev convenience for this machine only (hardcoded paths, pywin32). The
+dev convenience (pywin32, not installed on every machine). The
 shipped exe does the same job itself, from inside `AutoTyper.py`; see the
 Install section of `AGENTS.md`.
 
