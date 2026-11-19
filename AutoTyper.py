@@ -6626,6 +6626,17 @@ class AutoTyper:
                     # an exact wait - it wakes instantly when the typer is
                     # stopped instead of spinning on a timer
                     self.stop_event.wait(min(remaining, INTERVAL_POLL_S))
+                    if self.stop_event.is_set():
+                        break           # a stop or a pause outranks focus
+                    # The wait watches for the tab-in as well, not only the
+                    # moment before a message: the interval is the user's -
+                    # minutes at a setting like 200 - and a check that ran
+                    # only at message boundaries left Raze sitting in
+                    # front, looking ignored, for as long as that.  One
+                    # slice is the bound now, at any interval.
+                    if is_foreground(self._raze_hwnd):
+                        self._tab_in_stop = True
+                        break
                 if self.stop_event.is_set():
                     # _pause and _stop clear the deadline, and the slice
                     # that woke on the stop may just have written it back
@@ -6641,7 +6652,15 @@ class AutoTyper:
                     # Tk thread - a plain int assignment is all it takes
                     self.passes = passes
                     if loop_count and passes >= loop_count:
+                        # the loop's own rule ended the run: a tab-in seen
+                        # during the last wait does not outrank that
+                        self._tab_in_stop = False
                         break
+                if self._tab_in_stop:
+                    # the wait itself saw Raze come back - leave without
+                    # picking another line first; the message sent before
+                    # the wait is already counted above
+                    break
         except Exception as e:
             print("Typing error:", e, flush=True)
             self._worker_error = str(e)
