@@ -2,32 +2,32 @@
 
 Why this exists
 ---------------
-Windows renders text with ClearType, which paints blue/orange fringes around
-the glyphs - ugly on a pure black background.  Raze renders its own text
-instead, but the first implementation rasterised at 3x and downscaled the
-RGBA image.  That is what made everything look soft: the resize mixed the
-colour of the transparent pixels (black) into the edges of the glyphs, so
-every letter came out thinner and blurrier than it should be.
+Windows paints text with ClearType and leaves blue/orange fringes around the
+glyphs - ugly on a pure black background.  Raze draws its own text instead.
+The first attempt rasterised at 3x and downscaled the RGBA image, and that is
+what made everything soft: the resize mixed the colour of the transparent
+pixels (black) into the glyph edges, so every letter came out thinner and
+blurrier than it should be.
 
 How this works
 --------------
-1.  The glyph coverage is rendered by FreeType **at the exact pixel size the
-    text will be displayed at**, with the same hinting the OS uses.  Every
-    stem therefore lands on whole pixels - the crispness of native text.
+1.  FreeType renders the glyph coverage **at the exact pixel size the text
+    will be displayed at**, with the same hinting the OS uses, so every stem
+    lands on whole pixels - the crispness of native text.
 2.  Small text gets *stem darkening*.  Below roughly 12 pixels a stem of
-    Geist is thinner than one pixel, so it smears across two of them and
-    turns into grey mush - measurably, only two pixels of a 9px line came
-    out fully opaque.  The coverage of small type is therefore pushed
-    towards solid, which is exactly what Windows does with its own stem
-    darkening.  The letterforms keep their shape, they only gain weight.
-3.  The coverage is kept in a grayscale mask.  Colour is applied afterwards,
+    Geist is thinner than one pixel: it smears across two of them and turns
+    into grey mush - measurably, only two pixels of a 9px line came out
+    fully opaque.  So the coverage of small type is pushed towards solid,
+    which is what Windows does with its own stem darkening.  The letterforms
+    keep their shape; they only gain weight.
+3.  The coverage stays in a grayscale mask and colour is applied afterwards,
     so the antialiasing is perfectly neutral: no coloured fringes, no dark
     halo, and the text keeps its full brightness at the edges.
-4.  Letter spacing (tracking) is applied per glyph on integer positions, so
-    tracked type stays pixel aligned instead of drifting into blur.
+4.  Tracking is applied per glyph on integer positions, so tracked type
+    stays pixel aligned instead of drifting into blur.
 
-The result is text that is as sharp as the operating system's own, on any
-display, at any scale factor.
+The result is text as sharp as the operating system's own, on any display,
+at any scale factor.
 """
 
 import math
@@ -35,10 +35,10 @@ import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-# Only the faces the app renders with are listed.  Geist has one optical size -
-# there is no separate display cut - so the weight name is the whole name.
-# Listing only real files keeps a missing file from silently rendering the
-# wrong weight: a request for a weight that is not here falls back to Regular.
+# Only the faces the app renders with.  Geist has one optical size - no
+# separate display cut - so the weight name is the whole name.  Listing real
+# files only keeps a missing file from silently rendering some other weight:
+# a request for a weight that is not here falls back to Regular.
 FONT_FILES = {
     "Regular": "Geist-Regular.ttf",
     "Medium": "Geist-Medium.ttf",
@@ -47,10 +47,8 @@ FONT_FILES = {
     "ExtraBold": "Geist-ExtraBold.ttf",
 }
 
-# Below this size a stem of Geist is thinner than a pixel and needs to be
-# darkened, otherwise the text reads as grey mush instead of letters.
+# Below this a Geist stem is thinner than a pixel and needs darkening.
 SMALL_TEXT_MAX = 12
-# How hard the coverage of small type is pushed towards solid.
 SMALL_GAMMA = 0.45
 
 _font_cache = {}
@@ -82,8 +80,8 @@ def font(font_dir, weight, px_size, path=None):
 
 
 # Below this a glyph stops being readable, so `fit` gives up shrinking and
-# falls back to cutting.  A counter would have to outgrow its box by more
-# than a factor of three at six pixels to ever get here.
+# cuts instead.  A counter would have to outgrow its box by more than 3x at
+# six pixels to ever get here.
 FIT_MIN_PX = 6
 
 
@@ -112,15 +110,15 @@ def render(text, px_size, font_dir, weight="Regular", color="#ffffff",
 
     advance = _advance(text)
 
-    # A box that never changes its size: the text is clipped to fit and the
-    # artwork is padded to a fixed width, so a counter going from 9 to 10
-    # cannot push the layout around.
+    # a box that never changes size: the text is clipped to fit and the
+    # artwork padded to a fixed width, so a counter going from 9 to 10
+    # cannot push the layout around
     if max_px:
         limit = max_px - pad * 2
         if advance > limit and fit:
-            # A counter keeps every digit: the glyph size comes down until
-            # the whole string fits, and the box stays exactly as wide as
-            # it was, so nothing else on the row can move.
+            # a counter keeps every digit: the glyphs shrink until the whole
+            # string fits, and the box stays exactly as wide as it was, so
+            # nothing else on the row moves
             while px_size > FIT_MIN_PX and advance > limit:
                 px_size = max(FIT_MIN_PX, px_size -
                               max(1, int(px_size * (1.0 - limit / advance))))
@@ -147,8 +145,8 @@ def render(text, px_size, font_dir, weight="Regular", color="#ffffff",
     offset = pad + max(0, width - int(math.ceil(advance)))
 
     if tracking:
-        # per glyph placement: keeps the font's own kerning for the positions
-        # while giving every glyph an exact integer slot.
+        # per glyph placement: the font's own kerning still positions the
+        # glyphs, but each one lands in an exact integer slot
         for i, ch in enumerate(text):
             x = offset + int(round(probe.textlength(text[:i], font=fnt) + tracking * i))
             draw.text((x, pad), ch, font=fnt, fill=255)
@@ -156,14 +154,14 @@ def render(text, px_size, font_dir, weight="Regular", color="#ffffff",
         # one pass: kerning and ligatures are kept exactly as designed
         draw.text((offset, pad), text, font=fnt, fill=255)
 
-    # Stem darkening: at small sizes the stems are thinner than a pixel and
-    # spread across two of them.  Pushing the coverage towards solid gives
+    # Stem darkening: at small sizes a stem is thinner than a pixel and
+    # spreads across two of them.  Pushing the coverage towards solid gives
     # them the weight Windows gives them.
     #
-    # It is only done for light text on a dark background: there the extra
-    # coverage reads as brightness and the letter sharpens.  On dark text over
-    # a light button the very same boost would fatten the strokes and close
-    # the counters, so it is left alone there.
+    # Light text on dark only.  There the extra coverage reads as brightness
+    # and the letter sharpens; on dark text over a light button the same
+    # boost would fatten the strokes and close the counters, so it is left
+    # alone there.
     if darken and px_size <= SMALL_TEXT_MAX:
         mask = mask.point(_gamma_lut(SMALL_GAMMA))
 

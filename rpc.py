@@ -2,11 +2,11 @@ r"""
 Discord Rich Presence for Raze.
 
 Discord exposes a local named pipe - \\.\pipe\discord-ipc-0 through -9 - and
-speaks a small length-prefixed JSON protocol over it.  It is implemented here
-with ctypes and the standard library for the same reason the toast is: hard
+speaks a small length-prefixed JSON protocol over it.  ctypes and the
+standard library do the work here for the same reason as the toast: hard
 rule 6 keeps the shipped exe to one self-contained file, and a presence
-library would drag its own baggage (pypresence pulls requests, which pulls the
-whole http stack) into a payload that is unpacked from scratch on every
+library would drag its own baggage (pypresence pulls requests, which pulls
+the whole http stack) into a payload that is unpacked from scratch on every
 launch.
 
 The thread owns the pipe and never touches Tk.  The Tk thread only ever
@@ -36,9 +36,9 @@ BUTTON_LABEL = "Get Raze"
 # Discord profile.  See AGENTS.md, Testing protocol.
 enabled = True
 
-# Both prefixes are tried.  Discord has used each at different times and the
-# two namespaces are interchangeable for named pipes, but there is no cost to
-# asking twice and a real cost to not finding the pipe at all.
+# Both prefixes: Discord has used each at different times, the two
+# namespaces are interchangeable for named pipes, and asking twice costs
+# nothing against the real cost of not finding the pipe at all.
 _PIPES = [r"\\.\pipe\discord-ipc-%d" % i for i in range(10)]
 _PIPES += [r"\\?\pipe\discord-ipc-%d" % i for i in range(10)]
 
@@ -150,7 +150,7 @@ class Presence:
                 self._stop.wait(_POLL_S)
             except Exception:
                 # a broken pipe, a frame we did not like, anything at all:
-                # drop it and start over rather than let it raise on a thread
+                # drop it and start over rather than raise on a thread
                 # nobody is watching
                 self._drop()
                 self._stop.wait(_RECONNECT_S)
@@ -211,12 +211,12 @@ class Presence:
         activity = {"details": details, "state": state, "instance": False,
                     "buttons": [{"label": BUTTON_LABEL, "url": REPO_URL}]}
 
-        # Discord draws the timer itself from `start`, and `start` is the
-        # instant the app launched - one fixed timestamp, so the timer is the
-        # app's own uptime: it starts at zero when Raze opens and never
-        # resets for a pause or a stop, only when the app closes.  A fixed
-        # value also cannot drift between pushes, so every status carries it,
-        # idle and paused included.
+        # Discord draws the timer from `start`, and `start` is the instant
+        # the app launched - one fixed timestamp, so the timer is the app's
+        # own uptime: it starts at zero when Raze opens and resets only when
+        # the app closes, never on a pause or a stop.  A fixed value also
+        # cannot drift between pushes, so every status carries it, idle and
+        # paused included.
         if started_at:
             activity["timestamps"] = {"start": int(started_at)}
         return activity
@@ -281,6 +281,9 @@ class Presence:
         self._frames()
 
     def _frames(self):
+        # one frame is an 8-byte header - uint32 opcode, uint32 length, both
+        # little-endian - then exactly `length` bytes of payload; a partial
+        # one waits in _rx for the next drain
         while True:
             if len(self._rx) < 8:
                 return
@@ -312,8 +315,8 @@ class Presence:
         if event == "READY":
             self._ready = True
         elif event == "ERROR":
-            # a client id Discord does not recognise, mostly - worth failing
-            # the connection over so the retry does not keep half-alive
+            # mostly a client id Discord does not recognise - worth failing
+            # the connection over so the retry does not stay half-alive
             raise OSError("discord said no")
 
     def _drop(self):

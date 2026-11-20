@@ -1,13 +1,12 @@
 """
 Global hotkey handling for Auto Typer.
 
-One backend:
-  * Win32 GetAsyncKeyState polling - light, predictable, and it never
-    competes with the interface thread for the GIL.
+One backend: Win32 GetAsyncKeyState polling - light, predictable, and it
+never competes with the interface thread for the GIL.
 
-Several hotkeys can be watched at the same time (e.g. one to start the typer
-and one to stop it). The backends run on their own thread and only call the
-registered callback; they never touch Tkinter.
+Several hotkeys can be watched at once (one to start the typer, one to stop
+it).  The listener runs on its own thread, calls the registered callback and
+never touches Tkinter.
 """
 
 import ctypes
@@ -18,12 +17,12 @@ from ctypes import wintypes
 user32 = ctypes.windll.user32
 user32.GetAsyncKeyState.restype = wintypes.SHORT
 
-# Combinations are not a feature - a hotkey is one key.  This set only
-# exists so a bare modifier is refused as one, and so the listener can tell
-# a modifier press apart from a key press.
+# Combinations are not a feature - a hotkey is one key.  This set only exists
+# so a bare modifier is refused as one, and so the listener can tell a
+# modifier press apart from a key press.
 MODIFIERS = {"ctrl", "control", "alt", "shift", "cmd", "win", "super"}
 
-# --- virtual key codes for the polling fallback -------------------------- #
+# --- virtual key codes for the poll ---------------------------------------- #
 VK = {
     "backspace": 0x08, "tab": 0x09, "enter": 0x0D, "return": 0x0D,
     "shift": 0x10, "ctrl": 0x11, "control": 0x11, "alt": 0x12,
@@ -87,6 +86,7 @@ class HotkeyListener:
         return True
 
     def remove_hotkey(self, key):
+        """Unbind a key.  Rebinding without this leaves the old one armed."""
         key = normalise(key)
         with self._lock():
             self._bindings.pop(key, None)
@@ -139,24 +139,24 @@ class HotkeyListener:
             self._stop.set()
             self._join()
             return
-        # The loop reads _bindings live, so a rebind needs no new thread -
-        # starting one anyway is what used to stack pollers: four
-        # registrations plus start() made five threads at launch and every
-        # rebind added another, each polling GetAsyncKeyState at 8 ms for
-        # the life of the app.
+        # The loop reads _bindings live, so a rebind needs no new thread.
+        # Starting one anyway is what used to stack pollers: four
+        # registrations plus start() made five threads at launch, every
+        # rebind added another, and each one polled GetAsyncKeyState at
+        # 8 ms for the life of the app.
         if self._thread is not None and self._thread.is_alive():
             return
-        # The win32 poll is used on purpose: pynput's windows backend spins
-        # on the keyboard state in a tight loop, which holds the GIL and
-        # starves the interface thread - the app then feels sluggish no
-        # matter what it is doing.  Polling every 10 ms is just as quick to
-        # react and leaves the cpu alone.
+        # The win32 poll is here on purpose: pynput's windows backend spins
+        # on the keyboard state in a tight loop, holds the GIL and starves
+        # the interface thread - the app then feels sluggish no matter what
+        # it is doing.  Polling every 8 ms reacts just as fast and leaves
+        # the cpu alone.
         self._start_polling()
 
     def _start_polling(self):
-        # One event per thread: a thread that outlives a join timeout keeps
+        # One event per thread: a poller that outlives a join timeout keeps
         # its own (already set) signal and still leaves, so a later start
-        # can never end up with two pollers running.
+        # can never end up with two of them running.
         stop = self._stop = threading.Event()
 
         def loop():

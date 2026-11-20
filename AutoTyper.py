@@ -2,13 +2,13 @@
 Auto Typer
 A premium random auto typer for Windows.
 
-Visual language: a near-black canvas, a neon aurora glow,
-a particle field, hairline borders, 20-24px radii, pill buttons and tightly
-tracked display type in Plus Jakarta Sans.
+Visual language: a pure black canvas, hairline borders,
+20-24px radii, pill buttons and tightly tracked display type in Geist.
 
-The artwork is a single pre-rendered canvas and the UI is positioned on top
-with absolute coordinates, so nothing overwrites the background. The process
-is DPI aware and CustomTkinter scaling is disabled -> 1:1 pixels, razor sharp.
+The backdrop is flat black and the UI is positioned on top with absolute
+coordinates, so nothing overwrites it. The process is DPI aware and
+everything draws through one scale factor S - window geometry, CTk widgets
+and baked artwork alike - so the whole app stays sharp on any screen.
 """
 
 import ctypes
@@ -43,28 +43,28 @@ import rpc as rpcmod
 def _patch_ctk_draw_engine():
     """Make every bordered widget paint to the full edge of its canvas.
 
-    Two compounding roundings in customtkinter 6.0 leave a widget's own
-    canvas uncovered, which is invisible at 100% but shows at every other
-    resolution: borders never close on the right and bottom, and hairlines
-    under 2 design px compute to zero height and vanish.
+    Two compounding roundings in customtkinter 6.0 leave part of a
+    widget's own canvas unpainted - invisible at 100%, obvious at every
+    other scale: borders never close on the right and bottom, and
+    hairlines under 2 design px round to zero height and vanish.
 
-    1. Each widget stores its size by reverse-scaling the real canvas size,
-       then re-scales it on draw; at fractional scales the round trip lands
-       a pixel or two short of the canvas that is actually there.
+    1. Each widget stores its size by reverse-scaling the real canvas
+       size, then re-scales it on draw; at a fractional scale the round
+       trip lands a pixel or two short of the canvas that is there.
     2. The engine then floors that already-short size to an even number.
 
-    Once mapped, the canvas always fills the widget exactly (measured on
-    every widget in the app across the whole scale range), so the engine is
-    handed the canvas's own device-pixel size instead of the caller's, and
-    the even floor is dropped for the call.  Widgets draw once while still
-    unmapped, and customtkinter never redraws them afterwards unless their
-    size changes - so a <Configure> is bound on the canvas from the very
-    first draw: the moment the widget is mapped the canvas reports its true
-    integer size and the widget is repainted at it.  Before that first map
-    the canvas reports 1x1, so the caller's size is kept.  At 100% the
-    caller's size is already the exact integer canvas size and only the
-    even floor was biting (odd design widths painted a column short), so
-    the reference resolution gains exactly its missing border pixels.
+    Once mapped the canvas always fills the widget exactly (measured on
+    every widget in the app across the whole scale range), so the patch
+    hands the engine the canvas's own device-pixel size instead of the
+    caller's and drops the even floor for the call. Widgets draw once
+    while still unmapped and customtkinter never redraws them afterwards
+    unless their size changes - so a <Configure> is bound on the canvas
+    from the very first draw: the moment the widget is mapped, the canvas
+    reports its true integer size and the widget repaints at it. Before
+    that first map the canvas says 1x1, so the caller's size is kept. At
+    100% the caller's size already equals the canvas and only the even
+    floor was biting (odd design widths painted a column short), so the
+    reference resolution gains exactly its missing border pixels.
     """
     try:
         from customtkinter.windows.widgets.core_rendering import draw_engine as _de
@@ -79,13 +79,16 @@ def _patch_ctk_draw_engine():
 
     def _track_canvas(canvas):
         """Repaint the widget when its canvas lands on a size the paint did
-        not cover.  Geometry settles while the widget is still unmapped, so
-        the <Configure> it gets during the layout pass is not enough: a
-        packed widget's canvas can reach its final size before the window
-        maps and never be resized again.  <Map> is the event that fires
-        when the widget actually becomes visible, and it repaints only if
-        the size on screen differs from what was painted.  A position-only
-        Configure compares equal and costs one tuple compare."""
+        not cover.
+
+        Geometry settles while the widget is still unmapped, so the
+        <Configure> arriving during the layout pass is not enough: a packed
+        widget's canvas can reach its final size before the window maps and
+        never be resized again. <Map> fires when the widget actually becomes
+        visible, and repaints only if the on-screen size differs from what
+        was painted - a position-only Configure compares equal and costs one
+        tuple compare.
+        """
         widget = canvas.master
 
         def repaint(event=None):
@@ -110,8 +113,8 @@ def _patch_ctk_draw_engine():
         canvas = getattr(self, "_canvas", None)
         if canvas is not None:
             try:
-                # the tracker goes on from the first draw - widgets draw
-                # while unmapped and would otherwise never be repainted
+                # from the first draw: widgets draw while unmapped and
+                # would otherwise never be repainted
                 if not getattr(canvas, "_raze_tracked", False):
                     canvas._raze_tracked = True
                     _track_canvas(canvas)
@@ -121,13 +124,11 @@ def _patch_ctk_draw_engine():
                     canvas._raze_painted = (width, height)
             except Exception:
                 pass
-        # customtkinter scales an int border width with int(), so a
-        # 1-design-px ring computes to int(0.6) = 0 below 100% and the
-        # widget paints borderless where the reference resolution has its
-        # border - restore the declared one.  A design border only reaches
-        # zero while it is still 1 design px (2 px never truncates above
-        # SCALE_MIN), and a declared 0 stays 0, so this changes nothing at
-        # 100% and nothing anywhere else but the vanished ring.
+        # ctk scales an int border with int(), so a 1-design-px ring computes
+        # to int(0.6) = 0 below 100% and the widget paints borderless where
+        # the reference has its border - restore the declared one. Only a 1 px
+        # design border can reach zero (2 px never truncates above SCALE_MIN)
+        # and a declared 0 stays 0, so nothing else changes.
         if border_width == 0:
             try:
                 _widget = getattr(canvas, "master", None) if canvas is not None else None
@@ -202,10 +203,10 @@ FONT_MED = "Geist Medium"
 FONT_SB = "Geist SemiBold"
 FONT_MONO = "Cascadia Mono"
 
-# the font files that get registered at runtime.  Only the faces the app
-# actually renders with are shipped: every byte of this list is unpacked by a
-# onefile build on each launch.  The names match what Tk resolves - the medium
-# and semibold cuts carry their own family names ("Geist Medium").
+# the font files registered at runtime.  Only the faces the app renders
+# with are shipped: every byte here is unpacked by a onefile build on each
+# launch.  The names match what Tk resolves - the medium and semibold cuts
+# carry their own family names ("Geist Medium").
 FONT_FILES = ("Geist-Regular.ttf", "Geist-Medium.ttf", "Geist-SemiBold.ttf",
               "Geist-Bold.ttf", "Geist-ExtraBold.ttf")
 
@@ -216,11 +217,11 @@ GITHUB_URL = "https://github.com/nawaf49/Raze"
 # The window is painted the moment the build finishes, then everything
 # settles into place.  The whole window fades up while the nav drops in and
 # the cards rise, each one a beat behind the last.
-INTRO_FADE_MS = 190          # how long the window takes to fade up
-INTRO_MOVE_MS = 380          # how long one element takes to travel
+INTRO_FADE_MS = 190
+INTRO_MOVE_MS = 380
 INTRO_STAGGER_MS = 55        # the beat between one card and the next
-INTRO_RISE = 18              # how far a card comes up from
-INTRO_DROP = -10             # how far the nav comes down from
+INTRO_RISE = 18
+INTRO_DROP = -10             # negative: the nav comes down from above
 INTRO_FRAME_MS = 8           # requested frame period (see TAB_FRAME_MS)
 
 # --- tab switching --------------------------------------------------------- #
@@ -228,54 +229,46 @@ INTRO_FRAME_MS = 8           # requested frame period (see TAB_FRAME_MS)
 # The switch itself happens first, so a click is always answered at once -
 # this is only the polish on top of it.  Windows' "turn off unnecessary
 # animations" is honoured the same way the opening sequence honours it.
-TAB_MOVE_MS = 170            # how long one trip takes
-TAB_RISE = 10                # how far the view comes up from
-# The frame period is requested at 8 ms, not 16.  Measured on this Windows,
-# Tk's notifier serves an 8 ms timer on a steady ~15.6 ms cadence, while a
-# 16 ms one is bimodal: 16 ms most frames, ~31 ms on every fourth.  Every
-# animation therefore dropped about a quarter of its frames - a freeze
-# mid-travel - which is the judder the eye reads as "choppy".  The request
-# is finer than the cadence it lands on; elapsed-time progress (every loop
-# here measures its own travel against the clock) keeps the durations exact.
+TAB_MOVE_MS = 170
+TAB_RISE = 10
+# Requested at 8 ms, not 16: Tk's notifier serves an 8 ms timer on a steady
+# ~15.6 ms cadence on this Windows, while a 16 ms one is bimodal - 16 ms
+# most frames, ~31 ms on every fourth, so a quarter of every animation's
+# frames dropped. That judder is what reads as "choppy". The request is
+# finer than the cadence it lands on, and elapsed-time progress (every loop
+# measures its own travel against the clock) keeps the durations exact.
 TAB_FRAME_MS = 8             # steady cadence this lands on: ~16 ms
 TAB_WARM_MS = 1500           # when the off-screen tabs are built ahead
 
 # --- coming back from a minimise -------------------------------------------
 # Showing the window again repaints every child window it owns, and Windows
-# puts that on the screen as it finishes - the interface assembling itself
-# piece by piece, which is what "loads choppy on tab-back" was.  So the window
-# is held at alpha 0 while the work is paid for: a poll every RESTORE_POLL_MS
-# asks Tk for everything it still owes, and two polls under RESTORE_QUIET_MS
-# in a row mean the paint has actually stopped.  RESTORE_MAX_MS caps how long
-# the window may stay invisible, whatever a pathological restore does.
-# The poll runs at frame cadence: the paint itself is the long part
-# (~120-320 ms, dearer the longer the window was away), but the reveal also
-# waits on the schedule - the wait before the first poll plus two quiet ones -
-# so at 50 ms that tail cost up to 150 ms on top of the paint, against 48 ms
-# at 16.  Probed across 0.5 s / 2 s / 60 s absences: reveal ~300-420 ms.
+# puts that on screen as it finishes - the interface assembling piece by
+# piece, which is what "loads choppy on tab-back" was. So the window sits at
+# alpha 0 while the work is paid for: a poll every RESTORE_POLL_MS asks Tk
+# for everything it still owes, and two polls under RESTORE_QUIET_MS in a
+# row mean the paint has stopped. RESTORE_MAX_MS caps how long it may stay
+# invisible. Frame cadence because the reveal waits on the schedule as well
+# as the paint - probed ~300-420 ms across 0.5/2/60 s absences, up to
+# 150 ms of which is scheduling at a 50 ms poll against 48 ms at 16.
 RESTORE_POLL_MS = 16
 RESTORE_QUIET_MS = 8
 RESTORE_QUIET_NEEDED = 2
 RESTORE_MAX_MS = 1500
 
 # --- small motions -------------------------------------------------------- #
-# Dress, not structure.  Each of these plays while the interface is already
-# usable, writes its exact final values on the last frame rather than
-# trusting the curve to land on them, and stands down entirely under Windows'
-# "turn off unnecessary animations" (reduce_motion_enabled).  RISE_MS is one
-# rise: a fresh dialog fading in from DIALOG_RISE design px below home, the
-# editor's breath over POOL_SETTLE_DIP when another pool takes the screen.
-# Frames run on TAB_FRAME_MS - the house cadence - and ease-out cubic, the
-# curve the tab views already rise on.
+# Dress, not structure. Each plays while the interface is already usable,
+# writes its exact final values on the last frame rather than trusting the
+# curve to land on them, and stands down under Windows' "turn off unnecessary
+# animations". RISE_MS is one rise: a dialog fading in from DIALOG_RISE below
+# home, or the editor dipping POOL_SETTLE_DIP when another pool takes the
+# screen. Frames run on the house cadence, ease-out cubic.
 RISE_MS = 160
 DIALOG_RISE = 8
 POOL_SETTLE_DIP = 6
 
 # --- status pulse --------------------------------------------------------- #
-# The dot and the word breathe while the typer is running.  Every brightness
-# step is baked once, so running the animation costs one image swap per frame
-# and no rendering at all.  Honours Windows' "turn off unnecessary animations"
-# exactly like the opening sequence does.
+# The dot and the word breathe while the typer is running. Every brightness
+# step is baked once, so a frame costs one image swap and no rendering.
 PULSE_MS = 45                # how long one step is held
 PULSE_STEPS = 10             # brightness levels between dim and full
 
@@ -304,11 +297,10 @@ HISTORY_KEEP = 200
 APP_VERSION = "1.24"
 
 # What every release changed, newest first - the Updates tab reads this and
-# nothing else.  One line each, plain words, short enough for the panel: the
-# tab exists so a user who was moved onto a new version in the background
-# can find out why a feature appeared.  It ships inside the exe, so an older
-# copy simply shows fewer lines - every entry describes a version at or
-# below the one running.
+# nothing else. One line each, plain words, short enough for the panel: the
+# tab exists so someone moved onto a version in the background can find out
+# why a feature appeared. It ships inside the exe, so an older copy shows
+# fewer lines - every entry describes a version at or below the one running.
 UPDATES = (
     ("1.24", "Longest uptime tracks your time with the app open; tabbing in stops the run."),
     ("1.23", "Animations no longer skip frames, and the app runs lighter in the background."),
@@ -348,7 +340,7 @@ HOTKEY_H = 202
 SESSION_Y, SESSION_H = 672, 150
 FOOTER_Y = 840
 
-# the live animated band (canvas layer)
+# hero band, mirroring build_assets.py - nothing animates in it any more
 HERO_Y = 96
 HERO_H = 204
 
@@ -389,14 +381,14 @@ def read_config(path=None):
         "resume_key": "f7",
         # messages deliberately has no default here, the way history and
         # daily do not: absent means "the user has never had a pool" (the
-        # sample messages apply) while a stored [] means a pool the user
-        # emptied, which must come back empty.  Filling the key in would
-        # make those two indistinguishable and resurrect the samples.
-        # The two personal bests the History tab shows, and the day each
-        # was set.  They default to 0 / "" rather than being absent so a
-        # fresh config always has them, but a config that carries them
-        # keeps them: nothing here ever filters a file down to the keys
-        # this build knows about.
+        # samples apply), a stored [] means a pool the user emptied and it
+        # must come back empty - filling the key in would make those one
+        # answer and resurrect the samples.
+        #
+        # The two personal bests and the day each was set: 0 / "" by
+        # default so a fresh config always has them, but a config that
+        # carries them keeps them - nothing here ever filters a file down
+        # to the keys this build knows about.
         "best_sitting_msgs": 0, "best_sitting_s": 0,
         "best_sitting_msgs_day": "", "best_sitting_s_day": "",
     }
@@ -437,11 +429,11 @@ def _preserve_unreadable(target):
 
 # The six fields a record forgery would touch: the recent log, the per
 # day counts behind the History list and the Discord presence total, and
-# the two personal bests with the day each was set.  They travel under
-# one signature because they are one story - half of it being forged
-# makes all of it untrustworthy - while everything else in the file
-# (interval, pool, keys, profile names) stays the user's own to edit by
-# hand, the way it always was.
+# the two personal bests with the day each was set. They travel under one
+# signature because they are one story - half of it forged makes all of it
+# untrustworthy - while everything else in the file (interval, pool, keys,
+# profile names) stays the user's own to edit by hand, the way it always
+# was.
 STATS_KEYS = ("history", "daily", "best_sitting_msgs", "best_sitting_s",
               "best_sitting_msgs_day", "best_sitting_s_day")
 
@@ -450,16 +442,14 @@ def stats_key():
     """The HMAC key the stat fields are signed with - derived, never stored.
 
     Holding the key beside the data would defend nothing: whoever can
-    edit the config can edit the key too.  It is derived instead from
-    what is awkward to guess - a salt baked into the program, the account
-    name, the machine's own GUID - and every ingredient is best effort: a
-    failure to read one only narrows the key and never raises, because a
-    config load must not be able to die over a signature.  This stops the
-    casual edit the feature exists for (open the file, raise a number,
-    save).  It is not, and cannot be, a defence against someone determined
-    enough to take the exe apart for the salt: the program has to be able
-    to verify its own data, so the material is in there somewhere.  An
-    honest limit, kept local on purpose.
+    edit the config can edit the key too. So it is derived from what is
+    awkward to guess - a salt baked into the program, the account name,
+    the machine's GUID - every ingredient best effort, a failure only
+    narrowing the key and never raising, because a config load must not
+    die over a signature. That stops the casual edit the feature exists
+    for (open the file, raise a number, save). It cannot stop someone
+    who takes the exe apart for the salt: the program has to verify its
+    own data, so the material is in there somewhere.
     """
     parts = ["raze.stats.v1"]
     try:
@@ -532,19 +522,17 @@ def _clean_daily(value):
 def _check_stats(cfg):
     """Verify the stat fields against their signature, then harden them.
 
-    Order matters.  The signature is checked against the file as it
+    Order matters: the signature is checked against the file as it
     arrived first - the app signed exactly what it wrote, so any
     difference at all is an outside edit - and only then are the shapes
-    hardened, because a valid signature already means the shapes are the
-    app's own.
+    hardened, because a valid signature already means the shapes are
+    the app's own.
 
-    A config with no signature is an older build's (or a fresh one): its
-    stats stand as they are and the next save signs them, which is the
-    one-time adoption.  A signature that does not recompute resets the
-    six fields together and drops the stale one, so the file comes back
-    as one this build would have written; the rest of the config is
-    untouched - interval, pool, keys and profile names are the user's
-    own to edit, and nothing here gates on them.
+    A config with no signature is an older build's (or a fresh one):
+    its stats stand as they are and the next save signs them. One that
+    does not recompute resets the six fields together and drops the
+    stale signature; the rest of the config - interval, pool, keys,
+    profile names - is the user's own to edit and stays untouched.
     """
     if "stats_sig" in cfg:
         try:
@@ -582,20 +570,18 @@ def group_history(history):
 def history_runs(history, gap_s):
     """The finished runs hiding in the recent log -> [(count, secs, day)].
 
-    The log stores one timestamp per message and nothing else, so a run
-    is a stretch of entries following each other closely: anything
-    further apart than `gap_s` seconds is a different sitting.  The
-    caller cuts `gap_s` from the live interval (four intervals of
-    slack, floored at five minutes), so jitter inside a run never
-    splits it while two sittings either side of a break do.
+    The log stores one timestamp per message, so a run is a stretch of
+    entries following each other closely: anything further apart than
+    `gap_s` is a different sitting. The caller cuts `gap_s` from the
+    live interval (four intervals of slack, floored at five minutes),
+    so jitter inside a run never splits it while two sittings either
+    side of a break do.
 
-    Unparseable stamps are dropped - a file edited by hand must not be
-    able to raise here - and the entries are sorted first: the log is
-    written chronologically, but a hand-edited file may not be, and a
-    run's identity is the timestamps' own order.  A run's day is the
-    day it began.  The log is capped at HISTORY_KEEP entries, so this
-    is a floor rather than a rewrite: a live session still records its
-    exact numbers through `_record_session`.
+    Unparseable stamps are dropped (a hand-edited file must not raise)
+    and entries are sorted first: a run's identity is the timestamps'
+    own order, and its day is the day it began. The log is capped at
+    HISTORY_KEEP, so this is a floor - a live session records its exact
+    numbers through `_record_session`.
     """
     times = []
     for entry in history or ():
@@ -687,15 +673,13 @@ SAMPLE_MESSAGES = ["Hello there!", "How can I help you?", "Have a great day!"]
 def profiles_plan(cfg):
     """The stored message pools and which one is open.  Pure.
 
-    Reads `cfg`, writes nothing.  Three shapes have to survive the trip:
-    a config from before pools (its `messages` becomes the one pool), a
-    config that carries pools already (its active name is honoured, or
-    the first pool when that name is gone), and a fresh config (the
-    sample messages as one pool).  Junk anywhere - a pool that is not a
-    list, an empty name, an active name matching nothing - falls back to
-    the first pool rather than to nothing, and an emptied pool stays
-    emptied: `messages` absent means never had one, `messages` empty
-    means the user cleared it.
+    Reads `cfg`, writes nothing. Three shapes have to survive the trip:
+    a config from before pools (its `messages` becomes the one pool),
+    one that carries pools already (active name honoured, or the first
+    pool when that name is gone), and a fresh config (the samples as
+    one pool). Junk anywhere falls back to the first pool rather than
+    to nothing, and an emptied pool stays emptied: `messages` absent
+    means never had one, empty means the user cleared it.
     """
     profiles = {}
     stored = cfg.get("profiles")
@@ -939,7 +923,7 @@ def running_exe():
     """Where this process was launched from, or None under plain Python.
 
     A dev run is `python AutoTyper.py`, whose sys.executable is the
-    interpreter - it must never be offered an install, so it gets None.
+    interpreter - it must never be offered an install.
     """
     if getattr(sys, "frozen", False):
         return os.path.abspath(sys.executable)
@@ -1182,14 +1166,13 @@ def _vt(obj, index):
 def _create_shortcut(link_path, target, workdir, icon, desc):
     """Write a .lnk through IShellLinkW - raw COM through ctypes, nothing else.
 
-    pywin32 would be ten lines and a new dependency, and make_shortcut.py
-    carries it only because it is a dev script.  The shipped exe has to stay
-    one self-contained file (hard rule 6), so the vtable is called by hand:
-    IShellLinkW starts QI/AddRef/Release at 0, SetDescription is 7,
-    SetWorkingDirectory 9, SetIconLocation 17, SetPath 20 (19 is Resolve -
-    verified by reading the written link back, an index off by one saves a
-    link with no target in it at all); IPersistFile's Save is 6 after a
-    QueryInterface for its IID.
+    pywin32 would be ten lines and a new dependency, and the shipped exe
+    has to stay one self-contained file (hard rule 6), so the vtable is
+    called by hand: IShellLinkW starts QI/AddRef/Release at 0,
+    SetDescription 7, SetWorkingDirectory 9, SetIconLocation 17,
+    SetPath 20 (19 is Resolve - verified by reading the written link
+    back; an index off by one saves a link with no target in it at all),
+    and IPersistFile's Save is 6 after a QueryInterface for its IID.
 
     icon is a bare path, never "path,index": SetIconLocation takes the
     index as its own argument (0 below), so the WScript spelling glued
@@ -1266,12 +1249,12 @@ def _create_shortcut(link_path, target, workdir, icon, desc):
             except Exception:
                 pass
     # After every release above, so the file is closed and this call owns
-    # its own apartment: the banner's header name and icon resolve through
-    # this link's AppUserModelID matched against the toast's app id (see
-    # toast_app_id) - stamp it with the target path, the very string the
-    # toast reports while the registry lists Raze.  Best effort: a link
-    # that refuses the property still opens and uninstalls, only the
-    # header stays generic.
+    # its own apartment. The banner's header resolves this link's
+    # AppUserModelID against the toast's app id (see toast_app_id), so it
+    # is stamped with the target path - the exact string the toast
+    # reports while the registry lists Raze. Best effort: a link that
+    # refuses the property still opens and uninstalls, only the header
+    # stays generic.
     _set_shortcut_aumid(link_path, target)
 
 
@@ -1324,11 +1307,12 @@ class _PROPVARIANT(ctypes.Structure):
 
 
 def _aumid_key():
-    # Not key.fmtid = _guid(...): AutoTyper defines _GUID twice (install at
-    # ~672, toast at ~1396) and _guid() builds the second class while this
-    # struct's field is typed with the first - ctypes rejects that with the
-    # wonderfully confusing "incompatible types, _GUID instance instead of
-    # _GUID instance".  Bytes need no class identity.
+    # Not key.fmtid = _guid(...): AutoTyper defines _GUID twice - once here
+    # for the install, once again for the toast - and _guid() builds the
+    # second class while this struct's field is typed with the first -
+    # ctypes rejects that with the wonderfully confusing "incompatible
+    # types, _GUID instance instead of _GUID instance".  Bytes need no
+    # class identity.
     import uuid
     key = _PROPERTYKEY()
     ctypes.memmove(ctypes.byref(key.fmtid),
@@ -1338,19 +1322,20 @@ def _aumid_key():
 
 
 def _set_shortcut_aumid(link_path, appid):
-    """Stamp PKEY_AppUserModel_ID onto a .lnk.  Best effort: True if stamped.
+    """Stamp PKEY_AppUserModel_ID onto a .lnk. Best effort: True if stamped.
 
-    Opens the link through IPersistFile::Load, takes IPropertyStore off it,
-    SetValue + Commit + Save - the sequence Microsoft's own shortcut samples
-    use, because only the ShellLink object is known to carry this property
-    through to the file.  Everything lives inside this function: its own
-    apartment, its own releases, and every failure answers False rather than
-    raising, so a link that refuses the property still opens and uninstalls
-    and only the toast header stays generic.
+    Opens the link through IPersistFile::Load, takes IPropertyStore off
+    it, SetValue + Commit + Save - the sequence Microsoft's own shortcut
+    samples use, because only the ShellLink object is known to carry the
+    property through to the file. Everything lives inside this function:
+    its own apartment, its own releases, and every failure answers False
+    rather than raising, so a link that refuses the property still opens
+    and uninstalls and only the toast header stays generic.
 
-    The PROPVARIANT is built around a Python buffer and is deliberately NOT
-    PropVariantClear'd - that would CoTaskMemFree memory Python owns.  The
-    store copies the string during SetValue, so nothing outlives the call.
+    The PROPVARIANT is built around a Python buffer and is deliberately
+    NOT PropVariantClear'd - that would CoTaskMemFree memory Python
+    owns. The store copies the string during SetValue, so nothing
+    outlives the call.
     """
     from ctypes import wintypes
 
@@ -1800,20 +1785,20 @@ def _unregister_aumid(appid):
 def repair_shortcuts():
     """Stamp installed links' AUMID, fix their icon, register the header.
 
-    Silent and idempotent.  Runs once per launch from _auto_install on a
-    worker thread - file, COM and registry work, never Tk.  Reads each
-    link first and writes only a disagreement, so the steady state opens
-    two links and writes nothing; a failure on one link never stops the
-    other and never reaches the UI.
+    Silent and idempotent, run once per launch from _auto_install on a
+    worker thread (file, COM and registry work, never Tk). It reads
+    each link first and writes only a disagreement, so the steady state
+    opens two links and writes nothing; one link failing never stops
+    the other and never reaches the UI.
 
-    All three repairs decide the toast header: Windows draws the banner's
-    name and tile from the Start Menu link whose AppUserModelID matches
-    the toast's app id, and that tile is the link's own icon - which
-    every link written before the icon fix carried as a file named
-    "Raze.exe,0", so the shell drew a blank page instead of the emblem.
-    The attribution area itself is shell-controlled and cannot come from
-    the payload: an unpackaged app names it with DisplayName/IconUri in
-    the AUMID registration, which no build ever wrote.
+    All three repairs decide the toast header: Windows takes the
+    banner's name and tile from the Start Menu link whose AppUserModelID
+    matches the toast's app id, and that tile is the link's own icon -
+    which every pre-fix link carried as a file named "Raze.exe,0", so
+    the shell drew a blank page. The attribution area itself is
+    shell-controlled and cannot come from the payload: an unpackaged
+    app names it with DisplayName/IconUri in the AUMID registration,
+    which no build ever wrote.
     """
     plan = install_plan()
     for link in plan["links"]:
@@ -2392,16 +2377,13 @@ def is_foreground(hwnd):
 
 
 # --- the notification the automatic stops raise -------------------------- #
-# Toasts go through the modern Windows.UI.Notifications API, driven by hand
-# over ctypes rather than a library or a spawned shell: the process is meant
-# to sit there for years and has no business taking a dependency, or spawning
-# PowerShell, to put one line on the screen.  The old Shell_NotifyIcon
-# NIF_INFO balloon channel is dead on Windows 26H2 (build 26300) - every call
-# answers TRUE and nothing ever renders, proven live on this machine while a
-# WinRT toast from the same machine showed instantly.  The interface IIDs and
-# vtable slots below come from the Windows SDK headers (windows.ui.notifications.h,
-# windows.data.xml.dom.h): IInspectable owns slots 0-5 everywhere, so each
-# interface's own methods start at 6.
+# Toasts go through Windows.UI.Notifications, driven by hand over ctypes
+# rather than a library or a spawned shell - this process sits there for
+# years and has no business taking a dependency for one line on screen. The
+# old NIF_INFO balloon channel is dead on Windows 26H2 (build 26300): calls
+# answer TRUE and nothing renders, proven live beside a WinRT toast that
+# showed instantly. IIDs and slots below come from the SDK headers -
+# IInspectable owns 0-5, so each interface's own methods start at 6.
 
 def toast_app_id():
     """The app id Windows can resolve to a Start Menu shortcut.
@@ -2531,17 +2513,15 @@ def _xml_text(s):
 def toast_icon_path():
     """A PNG for the toast's app-logo slot, unpacked once and cached.
 
-    Windows draws a banner's header icon by resolving the AppID through
-    a Start Menu shortcut's AUMID, and the AppID we pass is the exe
-    path - which no shortcut matches - so the banner came up with a
-    generic page instead of the Raze tile.  The payload can carry its
-    own logo (ppLogoOverride), so the largest PNG frame of raze.ico
-    (every frame build_assets writes is PNG-encoded) is unpacked to one
-    fixed file in %TEMP% and referenced as a file URI: one path forever,
-    same capped-cache rule as the update download, and the file is
-    rewritten whenever the bundled frame's size stops matching it, so a
-    rebuilt icon can never go stale.  No icon ever blocks a toast:
-    None simply omits the image and the banner goes out as it always did.
+    The banner's header icon comes from a Start Menu shortcut's AUMID
+    rather than the payload, and our AppID (the exe path) matched no
+    shortcut, so the header came up as a generic page. The payload can
+    carry its own logo (appLogoOverride): the largest PNG frame of
+    raze.ico is unpacked to one fixed file in %TEMP% and referenced as a
+    file URI - one path forever, same capped-cache rule as the update
+    download, rewritten whenever the bundled frame's size stops matching
+    so a rebuilt icon can never go stale. No icon ever blocks a toast:
+    None omits the image and the banner goes out as it always did.
     """
     base = (os.environ.get("TEMP") or os.environ.get("TMP")
             or os.environ.get("LOCALAPPDATA") or ".")
@@ -2739,12 +2719,13 @@ def notify_toast(title, body):
         _release(notifier)
 
 
-# The shell's own verdict on whether now is a time to interrupt.  A
-# full-screen game (QUNS_BUSY), a locked screen, quiet hours or presentation
-# settings make Windows swallow a banner while the toast API still answers
-# S_OK - accepted, and then never shown.  That is exactly what
-# "notifications don't work" looked like from in here: Raze did its part and
-# Windows sat on it, so the message now waits for the screen to free up.
+# The shell's own verdict on whether now is a time to interrupt. A
+# full-screen game (QUNS_BUSY), a locked screen, quiet hours or
+# presentation settings make Windows swallow a banner while the toast API
+# still answers S_OK - accepted, and then never shown. That is exactly
+# what "notifications don't work" looked like from in here: Raze did its
+# part and Windows sat on it, so the message now waits for the screen to
+# free up.
 _QUNS_ACCEPTS_NOTIFICATIONS = 5
 
 
@@ -3122,12 +3103,13 @@ class BakedLabel(tk.Label):
         self._photo = photo
         self.configure(image=photo, text="")
         if self._fixed_height:
-            # A box shorter than its own artwork cuts the glyphs.  The box is
-            # design px converted once at build time, but the rendered photo
-            # is font metrics at the rounded device size, so below ~100%
-            # scale the two stop matching (height 7 for a 9 px photo at
-            # S=0.5).  The floor keeps a pinned height a *minimum*: rows are
-            # sized by their content, so a pinned box still cannot move.
+            # A box shorter than its own artwork cuts the glyphs. The box
+            # is design px converted once at build time, but the rendered
+            # photo is font metrics at the rounded device size, so below
+            # ~100% scale the two stop matching (height 7 for a 9 px photo
+            # at S=0.5). The floor keeps a pinned height a *minimum*: rows
+            # are sized by their content, so a pinned box still cannot
+            # move.
             if int(self.cget("height")) < photo.height():
                 self.configure(height=photo.height())
 
@@ -3194,12 +3176,12 @@ class BakedButton(ctk.CTkFrame):
         self.label = BakedLabel(self, text, size=size, weight=weight,
                                 color=color, tracking=tracking)
         self.label.place(relx=0.5, rely=0.5, anchor="center")
-        # No update_idletasks() here.  The label's requested width is already
-        # correct the moment its photo is configured - it matches the rendered
-        # image pixel for pixel - and a flush would instead drain every pending
-        # layout event in the whole app.  During _warm_views that pile is at
-        # its largest, so four pills alone cost ~130 ms and the opening
-        # interface visibly hitched.
+        # No update_idletasks() here: the label's requested width is
+        # correct the moment its photo is configured (it matches the
+        # rendered image pixel for pixel), and a flush would drain every
+        # pending layout event in the whole app - during _warm_views that
+        # pile is at its largest, and four pills alone cost ~130 ms of
+        # visible hitch on the opening interface.
         # winfo_reqwidth is device px; CTk configure expects design px and
         # scales it again - divide it back out or every button is S times
         # too wide on a scaled display
@@ -3403,35 +3385,31 @@ class StatTile(ctk.CTkFrame):
         cap = BakedLabel(self, caption, size=9, weight="SemiBold", color=FAINT,
                          tracking=1.1, height=14, anchor="w")
         cap.grid(row=1, column=0, sticky="w", padx=self.PAD)
-        # The day a record was set, on the caption's own line at the far
-        # right.  A tile with no day to show holds one baked space rather
-        # than an empty string - an empty render has no artwork to measure
-        # and no box to stand in.  It reads as MUTED because it is meant
-        # to be read, where the caption above it is FAINT.
+        # the day a record was set, on the caption's own line at the far
+        # right.  no day to show holds a baked space, not an empty string:
+        # an empty render has no artwork to measure.  MUTED because it is
+        # read, the caption above it FAINT because it is not
         self.date = BakedLabel(self, date or " ", size=9, weight="Regular",
                                color=MUTED, tracking=0.4, height=14,
                                anchor="e")
         self.date.grid(row=1, column=1, sticky="e", padx=(0, self.PAD))
-        # the tile has a fixed width, so a counter going from 9 to 10 cannot
-        # move a single pixel - the value stays left aligned under its caption
+        # fixed width: a counter going from 9 to 10 moves nothing, and the
+        # value stays left aligned under its caption
         self.value = BakedLabel(self, "0", size=self.VALUE_SIZE,
                                 weight=self.VALUE_WEIGHT, color=TEXT,
                                 anchor="w", height=28, fit=True)
         self.value.grid(row=2, column=0, columnspan=2, sticky="w",
                         padx=self.PAD, pady=(2, 0))
         if width:
-            # The caption is already rendered, so the room it needs is known
-            # exactly for *this* scale.  Its design width grows below ~60%
-            # scale (the font is round(size*S) and the tracking round(1.1*S),
-            # neither of which shrinks in step with S), so the box takes the
-            # wider of the design width and what this scale's artwork needs.
-            # `worst` - the longest string the counter can ever print - is
-            # measured the same way, so a value is never squeezed by its own
-            # caption's box.  A date is only counted when the tile was
-            # built with one: the session counters never show a day, and
-            # their width must not move for a space they will not fill.
-            # It is computed once, at build time: a running counter still
-            # cannot move it.
+            # the caption is already rendered, so its room is known exactly for
+            # this scale - and its design width grows below ~60%, where the
+            # font and tracking roundings stop following S, so the box takes
+            # the wider of design width and artwork width. `worst` - the
+            # longest string the counter can print - is measured the same way,
+            # so a value is never squeezed by its caption's box. All of it is
+            # computed once at build: a running counter cannot move the tile.
+            # A tile built without a date never counts one - session counters
+            # show no day and must not pay for the space.
             need = cap.winfo_reqwidth()
             if date:
                 need += self.date.winfo_reqwidth() + 6
@@ -3440,9 +3418,8 @@ class StatTile(ctk.CTkFrame):
                 room = max(room, self._worst_room(worst))
             self.configure(width=room)
             self.grid_propagate(False)
-            # and a value that outgrows the box anyway (a session past the
-            # ceiling's ceiling) is drawn at a size that fits it - every
-            # digit stays, nothing is ever ellipsized away
+            # a value past the ceiling's ceiling is drawn at a size that
+            # fits it - every digit stays, nothing is ellipsized away
             self.value.set_box(max_width=room - 2 * self.PAD)
 
     def _worst_room(self, worst):
@@ -3646,7 +3623,7 @@ class AutoTyper:
         self.root.after(400, self._set_window_icon)
 
     # ------------------------------------------------------------------ #
-    #  Animated background (canvas layer)
+    #  Backdrop, icon, placement
     # ------------------------------------------------------------------ #
 
     def _set_window_icon(self, window=None):
@@ -3875,13 +3852,12 @@ class AutoTyper:
         self.status_text = BakedLabel(self.root, "IDLE", size=10, weight="SemiBold",
                                       color=MUTED)
         # How long the app has been open, on the status line so it reads from
-        # every tab.  It runs from launch through every pause and stop and
-        # only ever resets when the app closes.  The box is sized from the
-        # longest string the clock can print and pinned, with the words
-        # right aligned inside it, so a year of uptime grows away from the
-        # status dot instead of into it - and fit=True means it would rather
-        # draw smaller than overlap the tabs.  MUTED, not FAINT: it is a
-        # clock people actually read, and the dim grey sits under the
+        # every tab; it runs from launch through every pause and stop and only
+        # resets when the app closes. The box is sized from the longest string
+        # the clock can print and pinned, words right aligned inside it, so a
+        # year of uptime grows away from the status dot, and fit=True means it
+        # would rather draw smaller than overlap the tabs. MUTED, not FAINT:
+        # it is a clock people actually read, and the dim grey sits under the
         # contrast line at 10 px.
         self.uptime_text = BakedLabel(self.root, "UPTIME 00:00", size=10,
                                       weight="SemiBold", color=MUTED,
@@ -3962,15 +3938,14 @@ class AutoTyper:
             return
         self._pulse_on = True
         self._pulse_i = 0
-        # Each level is held PULSE_MS of wall time, measured against the
-        # clock rather than counted in callbacks: a 45 ms timer is served
-        # bimodally on Windows (45 ms, then ~61 ms), and counted holds made
-        # the breath wobble with it.  The check itself runs on the house
-        # frame period, so a hold lands at the next tick past PULSE_MS -
-        # the same length every time.  perf_counter, not monotonic: on this
-        # platform monotonic reads at the 15.6 ms system tick (7 distinct
-        # values in 100 ms against 314k), so a due-time built from it could
-        # open 15 ms early or late and the breath wobbled with it.
+        # Each level is held PULSE_MS of wall time, measured against the clock
+        # rather than counted in callbacks: a 45 ms timer is served bimodally
+        # here (45 ms, then ~61) and counted holds made the breath wobble with
+        # it. The check runs on the house frame period, so a hold lands at the
+        # next tick past PULSE_MS - the same length every time. perf_counter,
+        # not monotonic: monotonic reads at the 15.6 ms system tick on this
+        # platform (7 distinct values in 100 ms against 314k), so a due-time
+        # built from it opened 15 ms early or late.
         self._pulse_due = time.perf_counter() + PULSE_MS / 1000.0
         try:
             self.root.after(TAB_FRAME_MS, self._pulse_step)
@@ -4097,12 +4072,12 @@ class AutoTyper:
         for k, (item, x0, x1) in self._tab_items.items():
             item.set_color(TEXT if k == key else MUTED)
         mid = (self._tab_items[key][1] + self._tab_items[key][2]) // 2
-        # Only the lift.  Lowering the others was the switch's pause on
-        # the whole screen: dropping a view repaints it *and* everything
-        # it had been covering - a hundred-odd widgets on every click.
-        # The lifted view covers the stack as it stands, because every
-        # view is a full-size panel painted in the window's own black,
-        # so what lies underneath can never show through.
+        # Only the lift. Lowering the others was the switch's pause on the
+        # whole screen: dropping a view repaints it *and* everything it had
+        # been covering - a hundred-odd widgets on every click. The lifted
+        # view covers the stack as it stands, because every view is a
+        # full-size panel painted in the window's own black, so what lies
+        # underneath can never show through.
         self._views[key].lift()
         if key == "history":
             self._refresh_history()
@@ -4445,19 +4420,14 @@ class AutoTyper:
         self.history_total.pack(side="right")
 
         # The two personal bests, drawn with the same StatTile the session
-        # card uses so the two cards read as one design.  They go between
-        # the header and the day list - the only room there is: the card
-        # is a fixed 726 and the holder below expands into whatever is
-        # left, so the list gives up a row or two instead of the card
-        # growing into the footer.  The strip is pinned like the Random
-        # row, so its tiles cannot resize it.
-        #
-        # Both pins are needed.  pack_propagate(False) governs pack slaves
-        # only - these tiles are gridded, and grid has its own propagate
-        # switch - so the strip would have come out 200 tall (CTkFrame's
-        # default) from the tiles' own requested height, eating three day
-        # rows.  grid_propagate(False) plus an explicit height on each
-        # tile pins it at 76 either way.
+        # card uses, between the header and the day list - the only room there
+        # is: the card is a fixed 726 and the holder below expands into
+        # whatever is left, so the list gives up a row rather than the card
+        # grow into the footer. Both pins are needed - pack_propagate(False)
+        # governs pack slaves only and these tiles are gridded, so grid alone
+        # left the strip 200 tall (CTkFrame's default), eating three day rows.
+        # grid_propagate(False) plus an explicit height pins it at 76 either
+        # way.
         strip = ctk.CTkFrame(card, fg_color="transparent", height=76)
         strip.pack(fill="x", padx=26, pady=(0, 16))
         strip.pack_propagate(False)
@@ -4485,15 +4455,13 @@ class AutoTyper:
                                  padx=(7, 0))
         self._refresh_records()
 
-        # The log is baked artwork as well - Windows would render it with
+        # the log is baked artwork as well - Windows would render it with
         # ClearType fringes, which is exactly what this app avoids.
         #
-        # This used to scroll inside a canvas of its own.  That needed a
-        # scrollbar which sat on top of the counts on the right and clipped
-        # them, and its virtualisation could leave a single row stranded in
-        # the middle of an otherwise empty panel.  Nothing scrolls here any
-        # more, so the rows are packed straight into the panel and there is
-        # no way for one to drift out of place.
+        # It used to scroll in a canvas of its own: the scrollbar clipped the
+        # counts on the right, and virtualisation could strand a single row in
+        # the middle of an empty panel. Nothing scrolls any more, so the rows
+        # pack straight into the panel.
         holder = ctk.CTkFrame(card, fg_color=FIELD, corner_radius=14,
                               border_width=1, border_color=BORDER)
         holder.pack(fill="both", expand=True, padx=26, pady=(0, 22))
@@ -4519,7 +4487,7 @@ class AutoTyper:
         """
         try:
             days = self._history_days
-            row_h, gap = 34, 12                     # pitch and spacing
+            row_h, gap = 34, 12
             try:
                 room = self.history_list.winfo_height()
             except Exception:
@@ -4712,7 +4680,7 @@ class AutoTyper:
         if not hasattr(self, "updates_list"):
             return
         try:
-            row_h, gap = 34, 12                     # pitch and spacing
+            row_h, gap = 34, 12
             room = self.updates_list.winfo_height()
             if room > px(20):
                 max_rows = max(1, int(room) // px(row_h + gap))
@@ -4746,12 +4714,10 @@ class AutoTyper:
                     pass
             self._updates_banner_row = None
 
-            # Every body in the list starts on one x.  "1.xx" tags are all
-            # naturally the same width, but the banner's tag is a word -
-            # "UPDATED" - and left to itself it would push its own text,
-            # and only its own, further right than every row underneath.
-            # So the tag column is pinned to the widest tag that can ever
-            # stand in it, and every body reads the same 18 px after it.
+            # Every body in the list starts on one x. "1.xx" tags are all the
+            # same width by nature, but the banner's tag is a word - "UPDATED" - and left to itself it would push its own text, and only its own,
+            # further right than every row underneath. So the tag column is
+            # pinned to the widest tag that can ever stand in it.
             tag_room = self._updates_tag_room
             if not tag_room:
                 tag_room = 0
@@ -4774,11 +4740,10 @@ class AutoTyper:
                 return tag
 
             # The banner the first visit after a background update carries.
-            # Held apart from _updates_rows so "the shipped version heads
-            # the list" keeps reading the first *version* row, and it takes
-            # one slot of the budget like any other row: the panel fits
-            # what it fits, banner or no banner, so the last row can never
-            # be pushed over the edge by it.
+            # Held apart from _updates_rows so "the shipped version heads the
+            # list" keeps reading the first version row, and it takes one slot
+            # of the budget like any other row - the panel fits what it fits,
+            # so it can never push the last row over the edge.
             if self._updates_banner:
                 brow = tk.Frame(self.updates_list, bg=FIELD)
                 brow.pack(fill="x", pady=(0, px(gap)))
@@ -4988,17 +4953,15 @@ class AutoTyper:
                     pass
         row.bind("<Button-1>", _flip)
 
-        # The stack measures exactly the card's height at 100% - there is
-        # no slack anywhere in it - and the baked artwork outgrows its own
-        # design box below ~60% scale (font metrics round up, and the pad
-        # around the glyphs is device px), so pack would clamp the Random
-        # row off its own line.  The card's margins are where the give is:
-        # 46 design px of rhythm, none of it load-bearing, against 18 px of
-        # gap below the card.  pack_configure is a raw tk call - CTk scales
-        # only the pack() it overrides - so these values are device px, and
-        # the floors keep the rhythm legible whatever the shortfall.
-        # Req heights read as a placeholder (200 apiece) until the first
-        # idle pass has laid the children out, so settle the stack first.
+        # The stack measures exactly the card's height at 100% - no slack
+        # anywhere - and the baked artwork outgrows its own design box below
+        # ~60% (font metrics round up, glyph pad is device px), so pack would
+        # clamp the Random row off its line. The give comes out of the card's
+        # margins: 46 design px of rhythm, none load-bearing, against 18 px of
+        # gap below the card. pack_configure is raw tk, so these values are
+        # device px, and the floors keep the rhythm legible whatever the
+        # shortfall. Req heights read as a placeholder (200 apiece) until the
+        # first idle pass, so settle the stack first.
         self.root.update_idletasks()
         over = (head.winfo_reqheight() + body.winfo_reqheight()
                 + px(26 + 10 + 20) - px(CONFIG_H))
@@ -5010,17 +4973,14 @@ class AutoTyper:
     def _build_startup_toggle(self, head):
         """Start with Windows, right-aligned on the CONFIGURATION line.
 
-        The config card's stack measures exactly CONFIG_H with no slack,
-        so a whole new row would clamp the Random line off its own row -
-        the caption is the one place with room, and an 18 design px
-        control on an 18 px caption adds no height at all.  Both pieces
-        go straight into `head`: a CTkFrame would default to 200x200 and
-        blow the caption open, and a plain tk frame would need a
-        background of its own.
-
-        CTk scales width/height/checkbox_*/corner_radius internally, so
-        these are design px - a px() here would double them at every
-        scale but 100%, which is what the Random row's box still does.
+        The config card's stack measures exactly CONFIG_H with no
+        slack, so a whole new row would clamp the Random line off its
+        own row - the caption is the one place with room, and an 18
+        design px control on an 18 px caption adds no height at all.
+        Both pieces go straight into `head`: a CTkFrame would default
+        to 200x200 and blow the caption open. CTk scales
+        width/height/checkbox_* internally, so these are design px -
+        a px() here would double them at every scale but 100%.
         """
         try:
             self.startup_box = ctk.CTkCheckBox(
@@ -5290,11 +5250,11 @@ class AutoTyper:
             menu.set(self.active_profile)
         self.install_asked = bool(c.get("install_asked"))
         # The badge on the Updates tab: has the running version's list been
-        # opened?  A config written before the key existed answers "no" -
-        # which is right, that user has never seen these lines - and so does
-        # one that will not parse; the worst case is a dot until the tab is
-        # opened once.  Shown here, while the opening animation still owns
-        # the nav, so it settles with the tabs; anything shown later has to
+        # opened? A config from before the key existed answers "no" - which
+        # is right, that user has never seen these lines - and so does one
+        # that will not parse; the worst case is a dot until the tab is
+        # opened once. Shown here, while the opening animation still owns
+        # the nav so it settles with the tabs; anything shown later has to
         # place it directly (see _set_updates_dot).
         self.seen_version = c.get("seen_version")
         self._updates_unseen = updates_unseen(self.seen_version, APP_VERSION)
@@ -5430,15 +5390,14 @@ class AutoTyper:
     def _maybe_save(self, now):
         """Write the config when something changed and its gate allows.
 
-        One write serves both flags: the history a run produces (a
-        minute's worth) and a pool or settings edit (a couple of
-        seconds' worth), and `_last_save` throttles them together -
-        whichever gate is due clears both, because the file carries
-        everything at once.  The clearing happens *after* the write:
-        `_save_config` flushes the number fields through their setters,
-        and those mark the config dirty again - clearing first would
-        leave the flag set by the very write that saved it, and the
-        heartbeat would then rewrite the file every two seconds forever.
+        One write serves both flags: a run's history (a minute's worth)
+        and an edit (a couple of seconds' worth), and `_last_save`
+        throttles them together, because the file carries everything at
+        once. The flags clear *after* the write - `_save_config`
+        flushes the number fields through their setters, which mark the
+        config dirty again, so clearing first would leave the flag set
+        by the very write that saved it and the heartbeat would
+        rewrite the file every two seconds forever.
         """
         if ((self._config_dirty and now - self._last_save > CONFIG_SAVE_EVERY)
                 or (self._history_dirty and now - self._last_save > SAVE_EVERY)):
@@ -5755,9 +5714,9 @@ class AutoTyper:
             # string must be in design px because CTkToplevel scales WxH.
             # 248, not the 225 the stack measures at 100%: below ~60%
             # scale the artwork grows past its pinned floor (rounded font
-            # metrics), and the stack's worst case - measured across
-            # 0.50-1.25 - is 232.  The spare sits between the complaint
-            # line and the pills, where _confirm's spare sits too.
+            # metrics) and the stack's worst case across 0.50-1.25 is 232.
+            # The spare sits between the complaint line and the pills,
+            # where _confirm's spare sits too.
             w, h = px(452), px(248)
             dialog.withdraw()
             dialog.title(title)
@@ -5867,16 +5826,15 @@ class AutoTyper:
     def _auto_install(self):
         """Install Raze on the first run, with nothing to ask.
 
-        Only ever reached from __main__, and only ever for a frozen exe
-        that Windows does not list yet - install_needed has the full
-        list of reasons not to.  Success is silent: the copy simply
-        carries on as an installed program.  A failure reaches the
+        Only ever reached from __main__, and only for a frozen exe
+        Windows does not list yet - install_needed has the full list of
+        reasons not to. Success is silent; a failure reaches the
         heartbeat, which shows the box.
 
-        When there is nothing to install - Windows already lists Raze -
-        the links may still predate the AUMID stamp and the icon fix and
-        keep the toast header generic, so the repair runs instead:
-        worker thread, silent, idempotent (see repair_shortcuts).
+        When there is nothing to install, the links may still predate
+        the AUMID stamp and the icon fix and keep the toast header
+        generic, so the repair runs instead: worker thread, silent,
+        idempotent (see repair_shortcuts).
         """
         try:
             if not install_needed(running_exe(), registry_installed()):
@@ -6017,14 +5975,11 @@ class AutoTyper:
         """Let the editor breathe once when another pool takes the screen.
 
         The frame dips POOL_SETTLE_DIP and rises home - the same
-        direction the tab views rise from - so a switch lands instead of
-        just appearing.  Motion only: the dip is written in device px,
-        because pack() is scaled by CTk but pack_configure() is not, and
-        the last frame writes pady (0, 0) - the exact value the layout
-        settled at - so nothing can be left offset.  Reduce motion never
-        moves it at all, checked per frame so a setting flipped
-        mid-flight still lands home, and a token lets a rapid second
-        switch supersede a settle still in flight.
+        direction the tab views rise from. Motion only: the dip is
+        written in device px (pack() is scaled by CTk, pack_configure()
+        is not) and the last frame writes the exact pady the layout
+        settled at. Reduce motion and token supersession follow the
+        same rules as every other dress motion.
         """
         if reduce_motion_enabled():
             return
@@ -6182,15 +6137,15 @@ class AutoTyper:
         self._start_requested = True
 
     def _request_stop(self):
-        """Called from the hotkey thread - never touch Tk from here."""
+        """Hotkey thread again - no Tk either."""
         self._stop_requested = True
 
     def _request_pause(self):
-        """Called from the hotkey thread - never touch Tk from here."""
+        """Hotkey thread; no Tk, flag only."""
         self._pause_requested = True
 
     def _request_resume(self):
-        """Called from the hotkey thread - never touch Tk from here."""
+        """Hotkey thread, same boundary."""
         self._resume_requested = True
 
     def _others_own(self, key, skip):
@@ -6350,11 +6305,9 @@ class AutoTyper:
 
     def _start(self):
         if self.paused:
-            # the keys are not each other's aliases: pause put this session
-            # to sleep and only the resume key wakes it, so start has no
-            # business undoing that behind the user's back.  It has to bail
-            # before the pool is read, or an empty one would pop a warning
-            # for a key that was meant to do nothing at all
+            # the keys are not aliases: pause put this to sleep and only
+            # resume wakes it, so start must not undo that.  Bail before
+            # the pool is read, or an empty one would warn for nothing
             return
         # a new session supersedes any announcement still waiting for the
         # screen to free up - it is about to be out of date
@@ -6375,8 +6328,7 @@ class AutoTyper:
         # the resumable session exactly where it was
         self._tab_stopped = False
 
-        # a fresh start always opens a new session - which is precisely what
-        # pause exists so that stepping away does not have to cost
+        # a fresh start always opens a new session; that is what pause is for
         self.typing = True
         self.arming = False
         self.paused = False
@@ -6387,7 +6339,8 @@ class AutoTyper:
         self._last_message = ""
         self._stop_requested = False
         self._worker_error = None
-        # snapshot the settings on the UI thread (Tk vars are not thread safe)
+        # the settings are read here, on the UI thread - Tk vars are not
+        # thread safe, and the worker only ever gets plain attributes
         self._auto_enter = True
         # flush first: pressing F8 leaves focus in the Loop field, so the
         # typed number has not been committed and get() would still answer
@@ -6499,19 +6452,16 @@ class AutoTyper:
     def _record_session(self):
         """Fold a finished sitting into the personal bests, if it beat one.
 
-        `_stop` is the one place a session is over - `_start` only ever
-        runs while `not typing`, so a live session's stats are never
-        discarded without passing through here first - and `_on_close`
-        catches one that was still going.  Best effort throughout: this
-        sits inside the stop path, so nothing in it may raise and take
-        the status line down with it.
+        `_stop` is the one place a session is over - `_start` only runs
+        while `not typing` - and `_on_close` catches one still going.
+        Best effort throughout: this sits inside the stop path, so
+        nothing in it may raise and take the status line down with it.
 
         The span is the app's own uptime, not the run's clock: the tile
-        reads LONGEST UPTIME beside the nav's UPTIME, so a sitting of
-        hours with the window open has to reach the record when the app
-        closes - the run's elapsed, frozen by every pause, never could
-        carry it, and uptime is always at least that long anyway.  A
-        build without the launch stamp falls back to the session clock.
+        reads LONGEST UPTIME beside the nav's UPTIME, and the run's
+        elapsed is frozen by every pause, so it could never carry a
+        sitting of hours - uptime always can. A build without the
+        launch stamp falls back to the session clock.
         """
         try:
             stats = getattr(self, "stats", None) or {}
@@ -6544,11 +6494,10 @@ class AutoTyper:
             pass
 
     def _typing_worker(self):
-        # The settings are plain attributes the Tk thread writes - no Tk
-        # object is ever read from here - so they are picked up again every
-        # pass instead of being snapshotted for the whole run: interval,
-        # loop, selection mode and the pool may all change while a run is
-        # going and now apply to the run itself.
+        # plain attributes the Tk thread writes, never Tk objects, so
+        # every pass reads them again instead of snapshotting: interval,
+        # loop, selection mode and the pool may all change mid-run and
+        # apply to the run itself
         order = self.messages
         if not order:
             self._worker_done = True
@@ -6560,13 +6509,11 @@ class AutoTyper:
 
         try:
             while not self.stop_event.is_set():
-                # a pool edited mid-run arrives as a fresh list from
-                # _update_pool_meta, so identity is enough to notice it.
-                # An emptied one keeps the list in hand: clearing the box to
-                # rewrite it must not kill a run already under way.  The
-                # index is the only thing that can fall out of range - a
-                # pass count left past the new length is absorbed by the
-                # pass end below, which compares with >= rather than ==
+                # a pool edit arrives as a fresh list from _update_pool_meta,
+                # so identity is enough to notice it; an emptied one keeps the
+                # list in hand, so clearing the box to rewrite it cannot kill a
+                # run under way. The index is the only thing that can fall out
+                # of range, and the pass end absorbs it by comparing with >=
                 live = self.messages
                 if live is not order and live:
                     order = live
@@ -6633,7 +6580,7 @@ class AutoTyper:
                     # moment before a message: the interval is the user's -
                     # minutes at a setting like 200 - and a check that ran
                     # only at message boundaries left Raze sitting in
-                    # front, looking ignored, for as long as that.  One
+                    # front, looking ignored, for as long as that. One
                     # slice is the bound now, at any interval.
                     if is_foreground(self._raze_hwnd):
                         self._tab_in_stop = True
@@ -6766,10 +6713,10 @@ class AutoTyper:
                               confirm_text="OK", cancel_text=None)
 
         # auto-update: a verified new copy waits here for the first
-        # moment no run exists.  The gate is the user's rule - never in
+        # moment no run exists. The gate is the user's rule - never in
         # the middle of a run or a loop, applied the moment it ends -
         # plus the opening sequence, so the swap never lands on a window
-        # still assembling itself.  typing stays set through pause and a
+        # still assembling itself. typing stays set through pause and a
         # tab-in stop, so one flag covers every way a session is alive
         if (getattr(self, "_update_ready", None)
                 and not self.typing and not self.arming
@@ -6860,8 +6807,7 @@ class AutoTyper:
             self.stats["elapsed"] = time.monotonic() - self._session_start
 
         # the app's own clock: seconds since launch, through every pause and
-        # stop, until the app closes.  set_text is a no-op when the words
-        # have not changed, so this costs a string compare per tick
+        # stop, until the app closes
         self.uptime_text.set_text("UPTIME " + _elapsed_text(time.monotonic()
                                                             - self._up_since))
 
@@ -6869,11 +6815,9 @@ class AutoTyper:
         self.tile_chars.set(str(self.stats["chars"]))
         self.tile_time.set(_elapsed_text(self.stats["elapsed"]))
 
-        # Hand the presence thread its three values: the status line, the
-        # lifetime message count and the instant the app launched, which is
-        # what its timer counts from.  It decides on its own whether anything
-        # is worth pushing to Discord, so this stays cheap enough to run on
-        # every heartbeat tick.
+        # hand the presence thread its three values: the status line, the
+        # lifetime count and the launch instant its timer runs from.  It
+        # decides itself what is worth pushing, so this stays cheap
         try:
             self.presence.set_state(self._rpc_status,
                                     sum(self.daily.values()),

@@ -109,10 +109,9 @@ def run():
                            A.pretty_day("nonsense") == "nonsense")
 
     print("session clock")
-    # the two counters the session card shows, both of which used to be able
-    # to outgrow their tile: the clock printed unbounded mm:ss (nine
-    # characters a year in, in a five digit box) and the countdown printed
-    # a decimal
+    # the two counters on the session card, both once able to outgrow their
+    # tile: the clock printed unbounded mm:ss (nine characters a year in,
+    # in a five digit box) and the countdown printed a decimal
     failures += not _check("elapsed under an hour reads mm:ss",
                            A._elapsed_text(87) == "01:27", A._elapsed_text(87))
     failures += not _check("elapsed over an hour reads hours",
@@ -133,8 +132,7 @@ def run():
                            A._next_text(0) == "--", A._next_text(0))
 
     print("hotkey ownership")
-    # four actions, four owners - a collision check that forgot one of them
-    # would quietly let the last setter take a key over
+    # four owners; a check that forgot one would let the last setter win
     class _Owned:
         start_key, stop_key, pause_key, resume_key = "f8", "f9", "f6", "f7"
 
@@ -147,9 +145,8 @@ def run():
                            str(A.AutoTyper._others_own(_Owned, "f7", "resume")))
 
     print("keystroke sender")
-    # send_paste has to be exercised without sending anything: user32 is
-    # swapped for a recorder, so no keystroke can possibly reach the desktop
-    # and nothing here depends on what currently has focus
+    # user32 is a recorder here, so send_paste runs without a keystroke
+    # reaching the desktop and without depending on what has focus
     sent = {}
     real_user32 = A._user32
 
@@ -176,9 +173,8 @@ def run():
                            events == [(1, 0x11, 0), (1, 0x56, 0),
                                       (1, 0x56, 2), (1, 0x11, 2)], str(events))
 
-    # the two paths through _type_text must go where they should, with the
-    # real sender and the real clipboard swapped out so nothing can reach the
-    # keyboard while this runs
+    # the two paths through _type_text, with the real sender and the real
+    # clipboard swapped out so nothing reaches the keyboard while this runs
     import threading
     import types
 
@@ -254,8 +250,8 @@ def run():
                            ordered.typed == ["a", "b", "c", "a", "b", "c"],
                            str(ordered.typed))
 
-    # the same seed must reproduce the picks, which pins the behaviour to one
-    # independent choice per interval instead of a shuffled pass through
+    # the same seed must reproduce the picks: one independent choice per
+    # interval, not a shuffled pass through the pool
     A.random.seed(20261023)
     expected = [A.random.choice(pool) for _ in range(6)]
     A.random.seed(20261023)
@@ -321,19 +317,19 @@ def run():
 
     # --- mid-run: the same check has to fire between messages ------------
     try:
-        # Raze in front again - bail out before anything is sent
+        # Raze in front again
         A._user32 = _FgRecorder(0x1234)
         tabbed = _Worker(pool, False, 6)
         tabbed._raze_hwnd = 0x1234
         A.AutoTyper._typing_worker(tabbed)
 
-        # the target app in front - carry on as normal
+        # the target app in front
         A._user32 = _FgRecorder(0x5678)
         running = _Worker(pool, False, 6)
         running._raze_hwnd = 0x1234
         A.AutoTyper._typing_worker(running)
 
-        # no handle was ever captured - must not kill the run
+        # no handle was ever captured
         A._user32 = _FgRecorder(0x1234)
         no_handle = _Worker(pool, False, 6)
         no_handle._raze_hwnd = 0
@@ -365,7 +361,7 @@ def run():
     failures += not _check("the counter ends on what was sent",
                            counted.stats["sent"] == 4 and len(counted.typed) == 4,
                            "%s %s" % (counted.stats["sent"], counted.typed))
-    # nothing is rewritten at send time - the pool is typed exactly as stored
+    # nothing is rewritten at send time
     failures += not _check("each message goes out exactly as typed",
                            counted.typed == ["one", "two", "one", "two"],
                            str(counted.typed))
@@ -485,9 +481,9 @@ def run():
                            "%s %s" % (emptied.typed, emptied._worker_error))
 
     # The interval mid-wait: a clock the harness owns stands in for the
-    # monotonic one and every wait advances it, so the run takes no real
-    # time and the numbers cannot flake.  The interval is shortened from
-    # inside the first wait - the one place a snapshot could not reach.
+    # monotonic one and every wait advances it - no real time, no flakes.
+    # The interval is shortened from inside the first wait, the one place
+    # a snapshot could not reach.
     class _Clock:
         def __init__(self):
             self.t = 5000.0
@@ -537,10 +533,9 @@ def run():
                            sliced._next_deadline is None,
                            str(sliced._next_deadline))
 
-    # The four keys are deliberately not aliases of one another.  _tick_inner
-    # is driven straight on a stub so this needs no window, no desktop and no
-    # worker thread - the flags are the whole thread boundary, so setting them
-    # is exactly what pressing the key does
+    # The four keys are not aliases.  _tick_inner is driven straight on a
+    # stub - no window, no desktop, no worker thread - and the flags are
+    # the whole thread boundary: setting them is what pressing a key does
     class _Tile:
         def __init__(self):
             self.value = None
@@ -609,9 +604,9 @@ def run():
 
         def _resume(self):
             self.calls.append("resume")
-            # the dispatch above is the only part this stub owns - the
-            # behaviour is the app's own, so a check can drive the heartbeat
-            # and still assert on what a real resume did to the session
+            # the dispatch alone belongs to the stub - the behaviour is the
+            # app's own, so a check drives the heartbeat and still asserts
+            # on what a real resume did to the session
             A.AutoTyper._resume(self)
 
         def _launch(self):
@@ -634,10 +629,9 @@ def run():
             pass
 
         def _maybe_save(self, now):
-            # the real gate, driven on the stub: nothing here is dirty
-            # (and _save_config above is a no-op), so a heartbeat tick in
-            # these tests never writes - but the wiring the tick relies
-            # on is exercised all the same
+            # the real gate, driven on the stub: nothing here is dirty, so
+            # a heartbeat tick never writes - but the wiring the tick
+            # relies on is exercised all the same
             A.AutoTyper._maybe_save(self, now)
 
         def _pulse_start(self):
@@ -707,9 +701,8 @@ def run():
     print("notification")
 
     # The toast rides on WinRT through ctypes: combase.dll binds the entry
-    # points, the interface IIDs come from the SDK headers, and the payload
-    # reaches Windows as XML - so the bindings, the ids and the XML are the
-    # three things that have to be exactly right.
+    # points, the IIDs come from the SDK headers, the payload reaches
+    # Windows as XML - bindings, ids and XML all have to be exactly right
     failures += not _check("the WinRT runtime is bound",
                            A._combase is not None
                            and hasattr(A._combase, "RoInitialize")
@@ -731,10 +724,9 @@ def run():
         xml_detail = str(e)
     failures += not _check("the toast payload is well-formed XML",
                            xml_ok, xml_detail)
-    # the header icon rides in the payload (appLogoOverride) because
-    # Windows cannot resolve one from an exe-path AppID: the image element
-    # has to be there, and the file it names has to be a real PNG, or the
-    # banner falls back to the generic page this fix exists to kill
+    # the header icon rides in the payload (appLogoOverride) - Windows
+    # cannot resolve one from an exe-path AppID, so the image must be
+    # there and name a real PNG or the banner goes generic again
     try:
         icon_doc = ElementTree.fromstring(A.toast_xml("Raze", "selftest"))
         images = list(icon_doc.iter("image"))
@@ -881,9 +873,8 @@ def run():
                                data.get("loop") == 9
                                and data.get("messages") == ["kept"], str(data))
 
-        # the personal bests the History tab shows: they arrive through
-        # the defaults, they survive a file that already carries them,
-        # and the plan that folds runs into them is pure
+        # the personal bests the History tab shows: defaults for a fresh
+        # file, read back untouched, and a pure plan that folds runs in
         fresh = A.read_config(os.path.join(tmp, "no-such-file.json"))
         failures += not _check(
             "a fresh config carries every record key",
@@ -1022,7 +1013,6 @@ def run():
 
         # the stat fields' signature: signed on the way out, verified on
         # the way in, and reset - only those six - when the file is edited
-        # around it
         signed = {"history": [{"t": "2026-11-01 10:00:00", "m": "hi"}],
                   "daily": {"2026-11-01": 1},
                   "best_sitting_msgs": 7, "best_sitting_s": 60,
@@ -1088,10 +1078,9 @@ def run():
             and data.get("daily") == {"2026-11-01": 12, "junk": 0},
             str(data))
 
-        # the message pools.  A config from before pools keeps its one
-        # pool, a fresh one gets the samples, and an emptied pool stays
-        # emptied: absent and empty are two different answers, which is
-        # why read_config no longer fills the key in
+        # the message pools.  A pre-pools config keeps its one pool, a
+        # fresh one gets the samples, an emptied pool stays emptied -
+        # absent and empty are two answers, so the key is left unfilled
         failures += not _check(
             "a fresh config carries no messages key",
             "messages" not in fresh, str(fresh.get("messages")))
@@ -1191,9 +1180,8 @@ def run():
 
         # the heartbeat's write gate: an edit is on disk within a couple
         # of seconds, history within a minute - and the write itself
-        # re-marks the dirty flag (it flushes the number fields through
-        # their setters), which must not condemn the file to a rewrite
-        # every two seconds forever
+        # re-marks the dirty flag through _commit_fields, which must not
+        # condemn the file to a rewrite every two seconds forever
         class _Saver(object):
             def __init__(self):
                 self._config_dirty = False
@@ -1244,11 +1232,9 @@ def run():
             str((s.writes, s._history_dirty)))
 
     print("single instance")
-    # False here is unambiguous: it comes back only on ERROR_ALREADY_EXISTS,
-    # and every other path of the function returns True.  Raze may already be
-    # open when this runs - the app has to be running for anything else to be
-    # useful - and in that case this process simply is the second copy, which
-    # is what the first check below proves just as well
+    # False here is unambiguous: it comes back only on ERROR_ALREADY_EXISTS
+    # and every other path returns True.  Raze may already be open when this
+    # runs, in which case this process simply is the second copy
     held = A.acquire_single_instance()
     refused = A.acquire_single_instance()
     if held:
@@ -1391,11 +1377,10 @@ def run():
                            not A.install_needed(plan["target"], False))
     failures += not _check("a fresh download installs itself",
                            A.install_needed(fresh, False))
-    # the entry point has to consult that gate: a dev run must never get
-    # as far as starting the worker, and a real download must.  The probe
-    # replaces _install_now and _repair_shortcuts, so do_install is never
-    # touched and the repair thread (which rewrites the real Start Menu
-    # links) never starts
+    # the entry point has to consult the gate: a dev run must never get as
+    # far as starting the worker, a real download must.  The probe replaces
+    # _install_now and _repair_shortcuts, so do_install is never touched
+    # and the repair thread that rewrites real Start Menu links never runs
     class _InstallProbe:
         started = 0
         repaired = 0
@@ -1432,10 +1417,10 @@ def run():
         str((dev_repaired, fresh_repaired)))
 
     # The banner's header name and icon resolve by matching the toast's
-    # app id against the Start Menu link's AppUserModelID, so the link has
-    # to carry the exact string toast_app_id reports.  The rule is pure,
-    # the key layout is fixed by the SDK, and the stamp round-trips on a
-    # throwaway link in a temp dir - never a shell folder.
+    # app id against the link's AppUserModelID, so the link has to carry
+    # the exact string toast_app_id reports.  The rule is pure and the
+    # key layout is the SDK's; the stamp round-trips on a temp-dir link,
+    # never a shell folder.
     target = r"C:\somewhere\Raze.exe"
     failures += not _check(
         "a link without an AUMID needs a stamp",
@@ -1480,10 +1465,9 @@ def run():
         "a new link carries its target as AUMID",
         stamped == exe, str(stamped))
     # The icon location is the other half of the toast header: the tile
-    # Windows draws is the matched link's own icon, and every link
-    # written before the fix stored the index glued onto the path - a
-    # file named "Raze.exe,0" that does not exist, so the shell drew a
-    # blank page instead of the emblem.
+    # Windows draws is the matched link's own icon, and every link written
+    # before the fix stored the index glued onto the path - a file named
+    # "Raze.exe,0" that does not exist, so the shell drew a blank page.
     failures += not _check(
         "an unreadable icon location counts as wrong",
         A.icon_needs_fix(None, exe))
@@ -1522,8 +1506,8 @@ def run():
     # The attribution area (header name + tile) is shell-controlled and
     # cannot come from the payload, so an unpackaged app names it in the
     # AUMID registration - DisplayName and IconUri under
-    # Software\Classes\AppUserModelId.  Pure here: the write itself
-    # happens on the install/repair worker, never in a suite.
+    # Software\Classes\AppUserModelId.  Pure here: the write happens on
+    # the install/repair worker, never in a suite
     subkey, values = A.aumid_registry_plan(target, r"C:\t\emblem.png")
     failures += not _check(
         "the header registration lives under the AUMID's path",
@@ -1539,10 +1523,9 @@ def run():
         A.aumid_registry_plan(target, None)[1] == [("DisplayName", "Raze")],
         str(A.aumid_registry_plan(target, None)))
 
-    # "Start with Windows" is a Run-key entry: the config file is never
-    # involved, so the pure plan plus a write against a stub registry
-    # are the whole surface a suite may touch.  The real Run key is the
-    # user's machine, not a test field.
+    # "Start with Windows" is a Run-key entry, never the config file, so
+    # the pure plan plus a write against a stub registry is the whole
+    # surface a suite may touch - the real Run key is the user's machine
     class _RunReg:
         HKEY_CURRENT_USER = object()
         KEY_SET_VALUE = 2
@@ -1604,9 +1587,9 @@ def run():
         str((refused, kept, cleared, reg.values)))
 
     print("update")
-    # Read-only throughout: the checker thread downloads and the apply
-    # path writes, so the selftest only ever asserts on the pure
-    # functions - version compare, release parsing and the plan.
+    # Read-only: the checker thread downloads and the apply path writes,
+    # so only the pure surface is asserted - version compare, release
+    # parsing and the plan
     failures += not _check("a tag with a v prefix parses",
                            A.parse_version("v1.17") == (1, 17),
                            str(A.parse_version("v1.17")))
@@ -1691,11 +1674,10 @@ def run():
         failures += not _check("a dev run never checks for updates",
                                not up["enabled"] and not up["target"])
 
-    # The Updates tab ships its list inside the exe, so the two have to
-    # stay in step: the newest entry is the version actually running, the
-    # list runs newest first, and every line is short enough for the panel
-    # it is drawn in.  A release that bumps APP_VERSION without giving the
-    # version its line fails here.
+    # The Updates tab ships its list inside the exe, so the two stay in
+    # step: the newest entry is the running version, the list runs newest
+    # first, and every line fits the panel.  A release that bumps
+    # APP_VERSION without its line fails here
     def _pad(t):
         p = tuple(t or ())
         return p + (0,) * max(0, 3 - len(p))
@@ -1713,11 +1695,9 @@ def run():
                            longest > 0 and longest <= 78, str(longest))
 
     # The badge beside the Updates tab: it shows until the running
-    # version's list has been opened once, and it takes an exact match to
-    # silence it.  A config written before the key existed, or one
-    # carrying something that is not a version at all, both read as "not
-    # seen yet" - the worst case either way is a dot until the tab is
-    # opened once.
+    # version's list has been opened once, and it takes an exact match
+    # to silence it.  A config from before the key, or one carrying junk,
+    # both read as "not seen yet" - the worst case is a dot
     failures += not _check("no stored version means unseen",
                            A.updates_unseen(None, A.APP_VERSION))
     failures += not _check("the shipped version is already seen",

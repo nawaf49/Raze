@@ -1,16 +1,17 @@
 """
 Generates every visual asset for Auto Typer.
 
-The artwork follows the background recipe exactly:
-  * body background #060607
-  * three desaturated lavender/white radial glows (top shaft + two soft bands)
-  * a flowing halftone mesh band that rides a wave curve
-  * a stack of thin, gradient-stroked wave lines
-  * a sparse star field
-  * the display type rendered straight into the pixels
+What it writes: assets/bg.png as flat black artwork, assets/bg_view.png
+cropped from y=96 down, assets/raze_emblem.png, app_icon.png beside this
+script and a multi-size assets/raze.ico.
 
-The wave parameters are written to bg_meta.json so the live canvas layer can
-draw its moving dots exactly on top of the baked mesh.
+The background once followed the original recipe - three desaturated
+lavender/white radial glows (top shaft + two soft bands), a flowing
+halftone mesh band that rides a wave curve, a stack of thin,
+gradient-stroked wave lines, a sparse star field and display type
+rendered straight into the pixels.  None of it is drawn any more: the
+artwork has been flat black since the hero was removed, and the constants
+below are what is left of that recipe.
 """
 import json
 import math
@@ -65,7 +66,7 @@ HEADLINE_TRACK = -2.2
 SUBTITLE_X, SUBTITLE_Y = 44, 232
 SUBTITLE_SIZE = 13
 
-# the live animated band (canvas layer) - window rows 96..300
+# the hero band - window rows 96..300
 HERO_Y = 96
 HERO_H = 204
 
@@ -145,7 +146,7 @@ def wave_y(spec, x):
 
 
 def build_background():
-    """Pure black artwork. The display type is still baked in for crispness."""
+    """Pure black artwork - the hero and its display type are gone."""
     base = Image.new("RGBA", (WIN_W, WIN_H), (0, 0, 0, 255))
 
     # --- (no display type: the hero was removed, the artwork stays pure black)

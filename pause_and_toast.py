@@ -1,8 +1,8 @@
-"""Verify pause and the toast routing against a real Raze window.
+"""Verify pause and toast routing against a real Raze window.
 
-Nothing reaches the desktop: the keystroke sender and the notification call
-are both replaced with recorders, so the only thing ever produced is what the
-real heartbeat and the real worker threads leave behind.
+The keystroke sender and the notification call are replaced with
+recorders, so nothing reaches the desktop - what gets produced is only
+what the real heartbeat and the real worker threads leave behind.
 """
 import os
 import sys
@@ -23,9 +23,8 @@ A.reduce_motion_enabled = lambda: True
 # a test must never put anything on the user's Discord profile
 A.rpcmod.enabled = False
 
-# the loop counter legitimately reads "Loop 3 ∞", and a cp1252 console
-# cannot encode it - one raised print would break the callback chain and
-# stall the whole harness
+# the loop counter reads "Loop 3 ∞" and cp1252 cannot encode it; one
+# raised print breaks the after() chain and stalls the harness
 try:
     sys.stdout.reconfigure(errors="replace")
 except Exception:
@@ -46,13 +45,12 @@ def check(label, ok, detail=""):
 
 
 def main():
-    # nothing may reach the keyboard, and nothing may reach the desktop
+    # nothing may reach the keyboard or the desktop
     A.send_enter = lambda: True
     A.notify_toast = lambda *a, **k: False
-    # the harness window is on-screen and does take focus, which is precisely
-    # what the real guard is meant to refuse.  This harness is about pause and
-    # the toast routing - the guard has its own coverage in selftest - so the
-    # guard is answered here rather than exercised
+    # this window does take focus, which is exactly what the real guard
+    # refuses; the guard is answered rather than exercised here, since
+    # selftest already covers it
     A.is_foreground = lambda handle: False
 
     def fake_type(text):
@@ -72,19 +70,18 @@ def main():
 
     app._type_text = fake_type
     app._toast = lambda body, title="Raze": toasts.append((title, body))
-    # This harness shares the machine's real profile, and both the
-    # heartbeat and a checkbox flip end in _save_config - config writing
-    # has its own coverage in selftest, against a temp folder. Nothing here
-    # may rewrite the file the real app keeps.
+    # the machine's real profile is shared here and every save path ends
+    # in _save_config; config writing has its own coverage in selftest,
+    # against a temp folder - nothing may rewrite the real app's file
     app._save_config = lambda: None
     app.msg_interval = 0.15
-    # ...but the interval field is whole seconds, and _start()/_save_config()
-    # now flush it (_commit_fields), which would put the field's value back
-    # through _set_msg_interval. Drop the callback: only msg_interval itself
-    # is read by the run, and the harness needs it far below one second.
+    # ...but the interval field is whole seconds, and _start() and
+    # _save_config() flush it through _commit_fields, putting the value
+    # back through _set_msg_interval.  Drop the callback: the run reads
+    # msg_interval alone, and the harness needs it far below one second
     app.nf_interval._on_change = None
-    # the first run has to survive on its own: the real config may well say
-    # loop 1, which would end the run long before the pause ever lands
+    # the real config may well say loop 1, which would end this run long
+    # before the pause ever lands
     app.nf_loop.set(0, call_change=False)
 
     app.editor.delete("1.0", "end")
@@ -94,10 +91,10 @@ def main():
     #  the session card has to be the whole card
     # ---------------------------------------------------------------- #
     # An orphaned block once dropped the card's body out of the build: the
-    # four counters and the LAST SENT box were sitting unreachable after a
-    # return in another method, and every other suite stayed green because
-    # the heartbeat swallows the AttributeError that follows.  So the boxes
-    # are asserted by name, here, where a missing one cannot hide.
+    # four counters and the LAST SENT box sat unreachable after a return in
+    # another method, and every other suite stayed green because the
+    # heartbeat swallows the AttributeError that follows.  Hence the boxes
+    # asserted by name - a missing one cannot hide here.
     tiles = [getattr(app, n, None) for n in
              ("tile_sent", "tile_chars", "tile_time", "tile_next")]
     check("the session card carries its four counters",
@@ -190,7 +187,7 @@ def main():
               app.stats["sent"] > sent_at_resume,
               "%s vs %s" % (app.stats["sent"], sent_at_resume))
 
-        # start while paused has to do nothing: the keys are not aliases
+        # start while paused does nothing: the keys are not aliases
         app._pause_requested = True
         root.after(500, start_while_paused)
 
@@ -226,11 +223,9 @@ def main():
     # ---------------------------------------------------------------- #
     #  settings changed while a run is under way
     # ---------------------------------------------------------------- #
-    # The worker reads the interval, the selection mode, the pool and Loop
-    # live, so every one of them is changed here under a session that is
-    # already typing - each through the path a user would take, never by
-    # touching the worker.  _save_config is a no-op above because the real
-    # checkbox flip would otherwise carry a write of this machine's profile.
+    # The worker reads interval, selection mode, pool and Loop live, so
+    # each is changed here under a session already typing - always through
+    # the path a user would take, never by touching the worker
     def mid_run_settings():
         # back to a known session: ordered, the two lines, no loop limit
         app.random_box.deselect()
@@ -241,9 +236,8 @@ def main():
         root.after(400, lengthen_pending)
 
     def lengthen_pending():
-        # the next message opens a two second wait, so the shortening
-        # below lands while that wait is still in flight - the one place a
-        # setting snapshotted at start could never reach
+        # the next message opens a two second wait, so the shortening below
+        # lands mid-wait: the one place a snapshot at start could never reach
         app._set_msg_interval(2.0)
         root.after(250, shorten_pending)
 
@@ -268,16 +262,16 @@ def main():
             hits.append(slot)
             return 0
 
-        # the worker would take every pick from slot 0, so a message in
-        # flight when the chooser swaps cannot be told from the rest
+        # the recorder answers slot 0 for every pick, so a message already
+        # in flight when the chooser swaps cannot be told from the rest
         A.random.randrange = rec
         app.random_box.select()
         app._toggle_random()            # exactly the command a click runs
         root.after(400, lambda: watch_random(real_randrange, hits))
 
     def watch_random(real_randrange, hits):
-        # n0 is taken once everything already in flight has landed, so
-        # only picks made with the new chooser are judged
+        # n0 is taken once everything in flight has landed, so only the
+        # picks the new chooser made are judged
         n0 = len(typed)
         root.after(500, lambda: verify_random(real_randrange, hits, n0))
 
@@ -425,8 +419,7 @@ def main():
         root.after(100, verify_fresh_start)
 
     def verify_fresh_start():
-        # start does not continue anything: it is a new session, so the
-        # counters are back at zero and the resumable state is gone
+        # a new session: counters back at zero, the resumable state gone
         check("the start key begins again from the top",
               app.typing is True and app.stats["sent"] == 0
               and app._tab_stopped is False,
@@ -470,8 +463,7 @@ def main():
         check("a counted run reads current, total and how many are left",
               app.session_loop._text == "Loop 3 of 5 / 2 left",
               app.session_loop._text)
-        # a run that has finished is clamped to its last loop rather than
-        # counting one past the end
+        # a finished run clamps to its last loop rather than counting past it
         app.loop_count = 1
         app.passes = 5
         root.after(150, verify_clamped)
@@ -494,14 +486,13 @@ def main():
         del balloons[:]
         app._pending_toast = None
         app._toast_retry = 0.0
-        # the routing tests above replaced _toast with a recorder; this one
-        # is about the real thing, so it is called directly
+        # the routing tests stubbed _toast; this one calls the real thing
         A.AutoTyper._toast(app, "Finished - 1 message sent")
         check("a screen Windows will not notify on holds the message",
               app._pending_toast == ("Raze", "Finished - 1 message sent")
               and balloons == [],
               str((app._pending_toast, balloons)))
-        # the screen frees up, and the heartbeat is what sends it
+        # the screen frees up; the heartbeat is what sends it
         A.notifications_allowed = lambda: True
         app._toast_retry = 0.0
         root.after(300, verify_held_sent)
@@ -517,9 +508,8 @@ def main():
         root.after(200, refused_fire)
 
     def refused_fire():
-        # Windows can also refuse at the API itself rather than through the
-        # state query; that has to hold the message too instead of dropping
-        # an announcement on the floor
+        # Windows can also refuse at the API itself rather than at the state
+        # query; that must hold the message too, not drop it on the floor
         A.notify_toast = lambda *a, **k: False
         app._pending_toast = None
         app._toast_retry = 0.0

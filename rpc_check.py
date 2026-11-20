@@ -1,10 +1,10 @@
 """Verify the Discord presence protocol against a fake local pipe.
 
-Nothing here reaches the desktop or the user's profile: `rpc._PIPES` is
-swapped for a pipe this test creates, so Discord's real pipe is never opened
-even when Discord is running.  What is checked is the framing, the handshake,
-the exact payloads Raze would send, the push throttle and the clear-down on
-exit - not Discord's opinion of them.
+`rpc._PIPES` is swapped for a pipe this test creates, so Discord's real
+pipe is never opened even while Discord is running - nothing reaches the
+desktop or the user's profile.  Checked: framing, handshake, the exact
+payloads Raze would send, the push throttle, the clear-down on exit -
+not Discord's opinion of them.
 """
 
 import ctypes
@@ -183,8 +183,8 @@ def run_exchange(label, message_mode):
     original = rpc._PIPES
     rpc._PIPES = [TEST_PIPE]
     presence = rpc.Presence(CLIENT_ID)
-    # the instant the app launched, an hour ago so the shape is the real
-    # one: this is what the timer counts from and it never moves again
+    # an hour ago - the instant the app launched, so the shape is the real
+    # one; this is what the timer counts from and it never moves
     started = int(time.time()) - 3600
     try:
         presence.set_state("TYPING", 41, started)
@@ -254,7 +254,7 @@ def run_exchange(label, message_mode):
                   (a.get("timestamps") or {}).get("start") == started,
                   a.get("timestamps"))
 
-        # nothing may move the start: sessions come and go, the app does not
+        # sessions come and go; the app's start does not move
         presence.set_state("TYPING", 1240, started)
         got = server.wait(lambda s: len(activities(s)) >= 4)
         acts = activities(server)

@@ -1,7 +1,7 @@
-"""Measure the four-keycap layout and capture the tabs.
+"""Measure the layout and capture the tabs.
 
-Geometry is asserted rather than eyeballed, because a keycap that quietly
-runs past its own frame is invisible in a screenshot until it is not.
+Asserted rather than eyeballed: a keycap that quietly runs past its own
+frame is invisible in a screenshot until it is not.
 """
 import os
 import sys
@@ -43,21 +43,18 @@ def main():
     root = ctk.CTk()
     app = A.AutoTyper(root)
     root.attributes("-alpha", 0.0)
-    # Opening the Updates tab records seen_version through _save_config, and
-    # the real config decides the badge at construction - neither may happen
-    # in a test, so the save is stubbed here and the badge state is forced
-    # in open_updates.
+    # opening the Updates tab records seen_version through _save_config and
+    # the real config decides the badge at construction - neither may
+    # happen in a test: save stubbed here, badge forced in open_updates
     app._save_config = lambda: None
     app._set_updates_dot(False)
     root.update_idletasks()
 
     def measure():
-        # the whole point of the fit clamp: on a screen smaller than the
-        # design, the app used to run off the bottom edge with no way to
-        # reach the session card or the footer
+        # the whole point of the fit clamp: without it the app ran off the
+        # bottom edge, session card and footer out of reach on a small screen
         aw, ah = A._work_area()
-        # the window's own frame (borders + title bar) sits outside the
-        # client area, so it has to fit too
+        # the frame sits outside the client area, so it has to fit too
         need_w = root.winfo_width() + A.FRAME_W
         need_h = root.winfo_height() + A.FRAME_H
         check("the window fits the work area's width",
@@ -73,10 +70,9 @@ def main():
               abs(A.S - A._fit_scale(A._device_scale(), aw, ah)) < 1e-9,
               "%s (dpi %s)" % (A.S, A._device_scale()))
 
-        # the app's own clock lives on the status line, so it reads from
-        # every tab - and its box is pinned from the longest string it can
-        # ever print, which is what keeps a year of uptime away from both
-        # the tabs on its left and the status dot on its right
+        # the clock reads from every tab, and its box is pinned from the
+        # longest string it can ever print - a year of uptime must stay
+        # clear of the tabs on its left and the dot on its right
         up = getattr(app, "uptime_text", None)
         if up is None:
             check("the uptime is on the status line", False, "missing")
@@ -93,14 +89,12 @@ def main():
                   "text %r box %s..%s dot %s tabs %s y %s/%s"
                   % (up._text, ux0, ux1, dot_x, tabs_right,
                      up.winfo_y(), app.status_text.winfo_y()))
-            # a clock people read: muted grey, not the dim one that sits
-            # under the contrast line at 10 px
+            # read as text: muted grey, not the dim one that fails AA at 10 px
             check("the uptime is the readable grey, not the dim one",
                   up._color == A.MUTED, up._color)
 
-        # colour follows meaning: the loop counter is data like every other
-        # number, so it is white - amber belongs to states (Paused, Tab out)
-        # and two amber words side by side read as one phrase
+        # colour follows meaning: the counter is data, so it is white. Amber
+        # belongs to states, and two amber phrases 16 px apart read as one
         loop = getattr(app, "session_loop", None)
         check("the loop counter reads as data, not a warning",
               loop is not None and loop._color == A.TEXT,
@@ -121,9 +115,9 @@ def main():
             check("%s fits its frame" % attr, 0 < lw <= cw_,
                   "text %s in frame %s" % (lw, cw_))
 
-        # the artwork has to sit on the fill it is looking at: a hover that
-        # lightened the pill used to leave the rest colour painted behind the
-        # text, which read as a dark box around every button label
+        # the label must sit on the fill it is looking at: a hover lightened
+        # the pill while the artwork kept the rest colour behind the text -
+        # a dark box around every button label
         buttons = []
 
         def collect(w):
@@ -174,8 +168,8 @@ def main():
         hwnd = int(root.wm_frame(), 16)
         cw.capture(hwnd, os.path.join(SHOTS, "hotkeys.png"))
 
-        # the card grew again for the fourth row; it must still sit inside
-        # the tab, and it must be tall enough to hold every row
+        # the card grew again for the fourth row; it still has to sit
+        # inside the tab and be tall enough to hold every row
         card = app._views["hotkeys"].winfo_children()[0]
         root.update_idletasks()
         top, bot = card.winfo_y(), card.winfo_y() + card.winfo_height()
@@ -200,9 +194,8 @@ def main():
         check("the records tiles are on the history card",
               msgs is not None and clock is not None,
               "%s / %s" % (msgs, clock))
-        # a forced record has to reach its tile through the same refresh
-        # the stop path calls (_save_config is stubbed above, so the
-        # forced values never leave this process)
+        # a forced record must reach its tile through the refresh the stop
+        # path calls; the save is stubbed, so nothing leaves this process
         app.best_sitting_msgs = 42
         app.best_sitting_s = 3725
         app.best_sitting_msgs_day = "2026-11-16"
@@ -228,9 +221,8 @@ def main():
         root.after(200, open_updates)
 
     def open_updates():
-        # the badge state is forced, never read: whatever the tester's own
-        # config says is irrelevant, and the first visit is made to be the
-        # one that clears it
+        # forced, never read: the tester's own config is irrelevant, and
+        # this visit is made to be the one that clears the badge
         app.seen_version = "1.18"
         app._updates_unseen = True
         app._set_updates_dot(True)
@@ -309,8 +301,7 @@ def main():
         hwnd = int(root.wm_frame(), 16)
         cw.capture(hwnd, os.path.join(SHOTS, "updates_badge.png"))
 
-        # coming back is an ordinary visit: nothing left to explain, and
-        # the bar returns to how it looks the rest of the time
+        # coming back is an ordinary visit - nothing left to explain
         app.show("updates")
         app._set_updates_dot(False)
         root.update_idletasks()
