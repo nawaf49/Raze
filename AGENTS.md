@@ -12,32 +12,17 @@ application currently has focus, one per interval, with Enter after each.
 The visual direction is original — pure
 black, quiet, premium, no chrome. Everything else here is original.
 
-## Two repos
+## The repo
 
-| Repo | Holds |
-| --- | --- |
-| `nawaf49/Raze-source` (private) | Everything: source, assets, this file, the source-side `README.md` |
-| `nawaf49/Raze` (public) | Downloads only: `README.md`, `app_icon.png`, and Releases carrying the exe |
+One repo, `nawaf49/Raze`: source, assets, this file, the README, and the
+Releases carrying the exe.
 
-- **The public repo is never cloned.** It is driven through the GitHub API with
-  `gh`: read the file's `sha`, base64 the new bytes, build a JSON payload, then
-  `gh api -X PUT repos/.../contents/... --input payload.json`. Write the payload
-  with `ConvertTo-Json` and a UTF8-without-BOM writer.
-- **The exe never enters git, in either repo.** It ships as a Release asset and
-  is gitignored here.
-- **The public repo's history is one squashed commit plus plain README edits.**
-  It used to be a dozen commits whose messages narrated their own changes —
-  `simpler wording`, `center the title`, `App icon for the README title`. The
-  user's objection: "people will say this is ai". It was squashed rather than
-  edited one message at a time because every message in there was the same
-  species, then force-pushed. Tags are separate refs, so the Release and its
-  asset survived untouched. An edit since then is one API commit carrying a
-  plain message (`README`); squashing it back to a single commit would mean
-  cloning the repo and force-pushing, which the user declined at v1.7.
-- The `README.md` in **this** repo is the developer-facing one: it carries
-  *Build from source* and *Credits*, which the public one deliberately omits.
-  They are not copies of each other. Fix drift by editing whichever is wrong —
-  never by copying one over the other.
+- **The exe never enters git.** It ships as a Release asset and is
+  gitignored — binaries committed to git inflate every clone forever.
+- **The README is edited through git** like any other file, and carries the
+  downloads landing page, *Build from source* and *Credits* together.
+- The full history is public, so commit messages matter (see below): plain
+  one-topic messages, never a narration of the change.
 
 ## Commit messages
 
@@ -79,11 +64,11 @@ These are not preferences. Breaking one silently ruins the product.
 | `rpc.py` | Discord presence: named pipe over ctypes, its own thread |
 | `rpc_check.py` | 49 checks: the presence protocol against a fake local pipe |
 | `build_assets.py` | Regenerates `assets/` artwork from source |
-| `make_shortcut.py` | Dev-only Start Menu + Desktop shortcut (hardcoded paths, pywin32). The shipped exe installs itself — see *Install* |
-| `version_info.txt` | PyInstaller version resource (`--version-file`), so Properties > Details reads "Raze, version 1.23". Bump with `APP_VERSION` and `UPDATES` |
+| `make_shortcut.py` | Dev-only Start Menu + Desktop shortcut (pywin32). The shipped exe installs itself — see *Install* |
+| `version_info.txt` | PyInstaller version resource (`--version-file`), so Properties > Details reads "Raze, version 1.24". Bump with `APP_VERSION` and `UPDATES` |
 | `AGENTS.md` | This file — read it first |
-| `README.md` | The **source-side** readme, not the public one. See *Two repos* |
-| `app_icon.png` | The dark tile; the public README title references it by this exact name |
+| `README.md` | The readme: downloads landing page, build instructions, credits |
+| `app_icon.png` | The dark tile; the README title references it by this exact name |
 | `raze_emblem_src.png` | Source artwork the emblem is generated from |
 | `hooks/hook-PIL.Image.py` | Trims Pillow to the one codec we use. See *Build* |
 | `assets/` | Emblem, background, the 5 Geist faces + `OFL.txt`, `raze.ico` |
@@ -298,9 +283,8 @@ and it never competes with Tk for the GIL.
   one silently win.
 - **The keys are not each other's aliases.** Pause only ever pauses and resume
   only ever resumes: F6 may not wake what it put to sleep, and F8 does nothing
-  at all to a paused session. The user was explicit — "the hotkeys aren't
-  meant for each other". This is why `_start()` opens with a `paused` guard
-  and why `_pause_requested` is no longer a toggle.
+  at all to a paused session. This is why `_start()` opens with a `paused`
+  guard and why `_pause_requested` is no longer a toggle.
 - **After a tab-in stop the two keys answer different questions.** The
   announcement names the resume key — "switch to your app first, then press
   F7 to continue" — and that key continues the very session that stopped,
@@ -385,8 +369,8 @@ under the chosen tab, tracked in `_underline_x`) and lets the view rise
 `TAB_RISE` 10 px into place over `TAB_MOVE_MS` 170 ms, ease-out cubic —
 polish on an already-done turn, so no click is ever delayed by it.
 
-- The stutter the user called choppy was the *first* click on Hotkeys or
-  History paying for their ~110 ms build out of the click itself. Both are
+- The first click on Hotkeys or History used to stutter, paying for the
+  ~110 ms build out of the click itself. Both are
   now built by `_warm_views`, `TAB_WARM_MS` 1.5 s after start-up while the
   interface is idle, and tucked under the open view — `show()` still only
   builds on demand if a click beats the timer. Updates joined them when
@@ -406,7 +390,7 @@ polish on an already-done turn, so no click is ever delayed by it.
 - **The Updates tab badges itself once.** A blue dot sits beside the tab
   until the user opens the tab after an update; the open view then leads
   with one `UPDATED` banner row (BLUE tag + "Raze updated to <version> -
-  what changed is below." — approved verbatim). The state is the config's
+  what changed is below." — fixed wording, do not reword). The state is the config's
   `seen_version` against the pure `updates_unseen()` (only an exact
   `parse_version` match of the running version silences it): the dot is
   built in `_build_nav` but placed only by `_set_updates_dot(True)` from
@@ -713,8 +697,8 @@ payload that is unpacked from scratch on every launch.
   session's own count. The session card is the place for that number; a profile
   is a stranger's view, and the only number worth showing a stranger is the one
   that never goes down.
-- The activity carries one **button** — `Get Raze` → the public repo, never the
-  source one. That is the real point of a presence: a stranger sees the
+- The activity carries one **button** — `Get Raze` → the repo itself. That
+  is the real point of a presence: a stranger sees the
   activity and has somewhere to go. `REPO_URL` and `BUTTON_LABEL` are the two
   constants. Discord does not always draw the button for the account that set
   it, so check with an alt or a friend before calling it broken.
@@ -724,7 +708,7 @@ payload that is unpacked from scratch on every launch.
   that breaks mid-frame is dropped and retried rather than raised on a
   thread nobody is watching.
 - The activity type is left at 0 ("Playing"), which is what Discord gives
-  third-party RPC by default. Flagged to the user at build time: while a
+  third-party RPC by default. Flagged at build time: while a
   game is running it may compete with the game's own presence.
 
 ## Config
@@ -852,8 +836,8 @@ payload that is unpacked from scratch on every launch.
   changed. `_refresh_records()` guards every tile with `getattr` because
   the History tab builds lazily — it is often called before the tiles
   exist as often as after, and the build calls it itself to seed them.
-  The captions read **MOST IN ONE RUN** and **LONGEST UPTIME** — the
-  user's wording for "most messages sent in one run" and total uptime —
+  Captions read
+  **MOST IN ONE RUN** and **LONGEST UPTIME** —
   and each tile carries its record's date beneath the value
   (`record_day_text`, which formats for a tile, unlike `pretty_day`
   which is for day rows; both read the `..._day` keys through
@@ -1034,10 +1018,9 @@ once, on first run. Per-user throughout: no admin, no UAC, no second file.
 
 ## Auto-updater
 
-Mandatory, and settled with the user in his own words: *"on startup and
-24/7 but if it finds one it shouldn't update if the user is running a loop
-or is in a run. as soon as the run finishes it should auto update. it
-constantly checks."* Every copy watches `nawaf49/Raze`'s releases and moves
+Mandatory: it checks at start-up and then 24/7, never applies an update
+while a run or a loop is in progress, applies it the moment the run ends,
+and never asks. Every copy watches `nawaf49/Raze`'s releases and moves
 itself onto a newer one with nothing to click and nothing to decline.
 
 - **The checker is a daemon thread, never Tk.** Started by
@@ -1098,8 +1081,8 @@ itself onto a newer one with nothing to click and nothing to decline.
 
 ## Testing protocol
 
-**Strictly non-intrusive.** The user is often playing a game while a change is
-being verified.
+**Strictly non-intrusive.** Verification often happens while a game is
+running on the same machine.
 
 - Never send a global keystroke, move the mouse, steal focus, or surface a
   window on the desktop.
@@ -1203,7 +1186,7 @@ the payload must not depend on what happens to be installed on the build
 machine:
 
 - `--version-file "version_info.txt"` stamps the VSVersionInfo resource, so
-  the file's Properties > Details reads "Raze, version 1.23" instead of
+  the file's Properties > Details reads "Raze, version 1.24" instead of
   blank and Explorer shows the icon's file type properly. Its numbers must
   match `APP_VERSION` in `AutoTyper.py` — bump both together, every release
   (see *Releasing*). The file itself is compiled into the resource; it does
@@ -1257,39 +1240,35 @@ open — the single-instance check reports honestly in both states.
   for the new version, plain words, newest first. The Updates tab renders
   it, and selftest fails a bump that skipped it (`UPDATES[0][0]` must
   equal `APP_VERSION`).
-- **The pitch changed at v1.18 — settled with the user, do not reopen it.**
-  v1.16's "First run offers a one-click install — or run it from anywhere."
-  died with the install offer: the shipped line is now "Single file. First
-  run installs itself — nothing to click." (approved verbatim). The public
-  README's Download section explains the automatic first-run install (plus a
-  bullet in *What it does*) — approved and published with v1.18. The
-  hotkeys table and the tab-out line under *Releasing*
-  stay as they are. The same rule applies to whatever ships next: the
-  public README's feature list gets its bullet for a new feature only at
-  release time, drafted and approved by the user before it goes out.
-- **Source lives in the private repo. The exe never does.** It is gitignored,
-  and binaries committed to git inflate every clone forever.
-- **Exactly one release exists at a time.** When the next one ships, delete the
-  old: `gh release delete v1.23 --repo nawaf49/Raze --yes`. The user's rule — a
-  visitor sees one clear download, never a menu of old versions. The private
-  repo's git log is the only remaining record of what v1.0–v1.22 contained.
-  **Current: v1.23.**
+- **The pitch is settled — do not reopen it.** The shipped line is "Single
+  file. First run installs itself — nothing to click." The README's Download
+  section explains the automatic first-run install (plus a bullet in *What
+  it does*). The hotkeys table and the tab-out line stay as they are. The
+  same rule applies to whatever ships next: the README's feature list gets
+  its bullet for a new feature only at release time, drafted and approved
+  before it goes out.
+- **The exe never enters git.** It is gitignored, and binaries committed to
+  git inflate every clone forever.
+- **Exactly one release exists at a time.** When the next one ships, delete
+  the old: `gh release delete v1.24 --repo nawaf49/Raze --yes`. A visitor
+  sees one clear download, never a menu of old versions. The git log is the
+  only remaining record of what v1.0–v1.23 contained.
+  **Current: v1.24.**
 - **Exactly one *tag* too.** Deleting the release leaves its tag behind, and
   the Tags page would still advertise old versions:
-  `gh api -X DELETE repos/nawaf49/Raze/git/refs/tags/v1.23`. Check with
+  `gh api -X DELETE repos/nawaf49/Raze/git/refs/tags/v1.24`. Check with
   `gh api repos/nawaf49/Raze/tags --jq ".[].name"` — only the current one may
   answer. Never touch the current tag: it is what the release hangs on.
-  (Public repo tags are pruned this way, so the Tags page shows one entry.)
 - Create it as a real release, not a draft; it becomes *Latest* on its own:
-  `gh release create v1.23 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
+  `gh release create v1.24 dist\Raze.exe --repo nawaf49/Raze --notes-file notes.md`
 - **Verify before publishing.** `Get-FileHash .\dist\Raze.exe -Algorithm SHA256`
   must equal the digest GitHub reports for the uploaded asset, read back after
   publishing with `gh release view <tag> --json assets --jq ".assets[].digest"`.
-  The notes carry neither: since v1.15 the user has not wanted the SHA256 in
-  them ("what's the point of the sha56 idk what that is") and the feature list
-  was dropped too — "it's already written in the readme". The match is still
-  checked both ways on every ship; only the publication of it is gone.
-  (v1.23: `2DECB46F69562AEAAD9AD162A202E5B8578CB41910AFB9BF657D88A9D41F06D7`
+  The notes carry neither: since v1.15 the SHA256 has no place in them and
+  the feature list was dropped too — the README carries both. The match is
+  still checked both ways on every ship; only the publication of it is gone.
+  (v1.24: `813C665B2AF9BDBA8721339B7D0C3EFB2CC48C2B34F500EA0290DF3D7C46B438`
+  over 15,184,483 bytes; v1.23: `2DECB46F69562AEAAD9AD162A202E5B8578CB41910AFB9BF657D88A9D41F06D7`
   over 15,183,316 bytes; v1.22: `F840B261273A285D5F4080EEC42CC61C6E4C5B710BF4782B5E57C9E5EE64EB11`
   over 15,183,604 bytes; v1.21: `7C79ACAED791F3D46D3155252DFEE0C6AD370CA3E3D8B721664871A7EB8DCE38`
   over 15,180,737 bytes; v1.20: `AB534CE801C8DFE598239E23663F3F833254801268B8A70E7EF209F4D4FCC849`
@@ -1327,24 +1306,22 @@ and stops if you tab back in.
 ```
 
   Read the published one back with
-  `gh release view v1.23 --repo nawaf49/Raze --json body --jq .body`.
+  `gh release view v1.24 --repo nawaf49/Raze --json body --jq .body`.
 
-## The public README
+## The README
 
-Lives in the public repo only, edited through the API. These are settled
-decisions — do not re-open one without asking:
+The single `README.md`, edited through git. These are settled decisions —
+do not re-open one without asking:
 
-- **Wording.** The user's rule, in his own words: "please display it in a
-  simple way. users won't know what you're talking about if you don't say what
-  you're talking about. i'm all for simplisicty." Concretely: every section
-  opens by saying what it is about before it uses a term, and every bullet
-  names its own subject — "Choose how many seconds pass between messages, and
-  how many times **Raze** goes through the list" — rather than hanging off an
+- **Wording.** Display it in a simple way: users will not know what a term
+  means if it is never introduced. Concretely: every section opens by saying
+  what it is about before it uses a term, and every bullet names its own
+  subject — "Choose how many seconds pass between messages, and how many
+  times **Raze** goes through the list" — rather than hanging off an
   implied one. All features stay listed; they just get short.
-- **No key combinations.** The user's word: "there are no key combinations" —
-  said a second time to remove it as a feature, not only from the wording.
-  `hotkeys.is_valid` now rejects anything that is not exactly one key, so
-  `set_hotkey` refuses a combination and nothing can arm one;
+- **No key combinations** — said twice, to remove the feature and not only
+  the wording. `hotkeys.is_valid` now rejects anything that is not exactly
+  one key, so `set_hotkey` refuses a combination and nothing can arm one;
   `_apply_config` swaps a combination still sitting in an old config back to
   that action's default key (`_stored_key`), so no action is ever left with
   a key that will not register; and the Hotkeys dialog says only "Use a
@@ -1356,8 +1333,8 @@ decisions — do not re-open one without asking:
   `<h1 align="center"><img src="app_icon.png" width="43" align="top" alt=""> Raze</h1>`
   - `align="middle"` is wrong on GitHub: Blink maps it to
     `-webkit-baseline-middle`, which pins the image centre to the **baseline**.
-    The icon hung 11.5 px below the optical centre of "Raze" and the user
-    spotted it at a glance — "look how uneven they are".
+    The icon hung 11.5 px below the optical centre of "Raze" — visibly
+    uneven at a glance.
   - The target is the glyph box centre of the word, cap top to baseline. On the
     live page: baseline 571, cap height 23, target 559.5.
   - Sweeping every `align` value against every plausible size on the real page
@@ -1370,23 +1347,19 @@ decisions — do not re-open one without asking:
     `getBoundingClientRect().bottom` **is** the baseline. Take the cap height
     from a canvas `measureText('Raze').actualBoundingBoxAscent`. The target
     centre is `baseline - capHeight/2`; compare that to the image's own
-    centre. No clone is needed, and the public repo is driven through the API
-    anyway.
+    centre. No clone is needed.
   - Re-measure after any edit. Changing the line box moves the baseline, so a
-    delta computed before a change is meaningless after it — this bit us once.
+    delta computed before a change is meaningless after it.
 - **Badges** are `flat-square`, `color=141418` (`SURFACE_2`), label green
   `22c55e` for downloads and blue `2f6bff` for platform — the app palette, not
   shields.io's defaults.
 - **No checksum section, anywhere public.** Users do not verify hashes; since
-  v1.15 the SHA256 appears in neither the README nor the release notes — the
-  user's word: "what's the point of the sha56 idk what that is". It is still
-  verified on both sides at ship time (see *Releasing*), just not published.
-  Links point at `releases/latest`, never a pinned version.
-- **Every feature is listed — with exceptions.** When the uptime display and
-  the tab-back split were added (v1.15) the instruction was "add all the
-  features but don't include basic features like discord rpc": the README
-  carries everything a user does, but the Discord presence is deliberately
-  not among them. Do not add it without asking.
+  v1.15 the SHA256 appears in neither the README nor the release notes. It is
+  still verified on both sides at ship time (see *Releasing*), just not
+  published. Links point at `releases/latest`, never a pinned version.
+- **Every feature is listed — with exceptions.** The README carries
+  everything a user does, but the Discord presence is deliberately not among
+  them. Do not add it without asking.
 - The logo file is `app_icon.png`, referenced relatively. The name is
   load-bearing — renaming it breaks the title line silently.
 
@@ -1394,9 +1367,9 @@ decisions — do not re-open one without asking:
 
 Do not add these without asking.
 
-- **Background typing** (PostMessage / AttachThreadInput) — built, then removed
-  at the user's request. Topic closed.
+- **Background typing** (PostMessage / AttachThreadInput) — built, then
+  removed. Topic closed.
 - **Error log** — there is none. `print("Typing error:", e)` in the `--windowed`
-  exe goes nowhere. The user was offered a log and did not take it.
+  exe goes nowhere. A log was offered and declined. Do not add one.
 - **Cloud sync** — rejected. This is a local tool. (The auto-updater is no
   longer absent — see *Auto-updater*.)
