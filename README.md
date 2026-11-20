@@ -8,7 +8,68 @@
 <p align="center">
   <a href="https://github.com/nawaf49/Raze/releases/latest"><img alt="Downloads" src="https://img.shields.io/github/downloads/nawaf49/Raze/total?style=flat-square&labelColor=22c55e&color=141418"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-141418?style=flat-square&labelColor=2f6bff&logo=windows11&logoColor=f6f6f8">
+  <a href="https://github.com/nawaf49/Raze/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/nawaf49/Raze?style=flat-square&labelColor=22c55e&color=141418"></a>
 </p>
+
+## Overview
+
+Raze is a desktop auto-typer for Windows, shipped as a single `Raze.exe` -
+one file, no runtime dependencies, no installer to click through and no
+admin rights. Give it a list of messages, press one key, and it types them
+into whatever application you are working in, one message at a time, pressing
+Enter after each.
+
+It runs quietly in the background for as long as you leave it open: your
+messages and history are stored in your own user profile, the interface fits
+itself to any screen from 800x600 to 4K, and the app keeps itself up to date
+in the background with nothing to approve.
+
+## What it does
+
+- **Message pool** - one message per line. Import / export `.txt`, shuffle,
+  clear, and keep several named lists at once.
+- **Message interval** - the gap between each message, in seconds.
+- **Loop** - how many times to repeat the pool. `0` is infinite, `1` is a
+  single pass.
+- **Random** - pick the next message at random instead of walking the list.
+- **Four hotkeys** - `F8` start, `F6` pause, `F7` resume, `F9` stop by default,
+  all four changeable on the Hotkeys tab. They are not aliases of each other:
+  pause freezes the clock and keeps your session counters, only resume picks
+  it back up, and stop ends the session so the next start begins a new one.
+- **Session history** - how many messages went out on every day, plus
+  lifetime records for the most messages in one run and the longest uptime.
+  It is permanent: it stays until the app data is deleted.
+- **Self-updating** - a newer release is downloaded, verified and applied
+  between runs, so the version you have is always current.
+- **Notifications** - if Raze stops without you asking (the list ran out,
+  typing failed, or you tabbed back into it), you get a Windows toast. Not
+  when you stop it yourself.
+
+## How it works
+
+- **The typing loop.** The pool is read fresh on every message, so editing
+  the list, the interval or the loop count mid-run applies to the run already
+  under way. ASCII goes out character by character through `SendInput`;
+  everything else is copied to the clipboard and pasted, because not every
+  application honours Unicode key events. Enter follows each message.
+- **The focus guard.** Raze never types into itself. It refuses to start
+  while its own window is in front, and if you tab back in mid-run it stops
+  within one 100 ms slice of the wait between messages - the session and its
+  counters survive, `F7` continues it, and `F8` starts a fresh one.
+- **Global hotkeys** are polled at 8 ms on their own thread rather than
+  registered with Windows, so the focused application never loses a key and
+  the listener never competes with the interface.
+- **The interface is artwork.** No widget ever renders text directly; every
+  label is drawn to a transparent PNG at startup, which keeps type crisp at
+  any size. Everything scales through a single factor that clamps itself to
+  the screen, so the whole app shrinks together on a small display instead of
+  running off the edge.
+- **Updates** are checked against this repository's releases on a background
+  thread, and the download is only ever applied after its SHA-256 digest
+  matches what GitHub reports. A run or a loop in progress is never
+  interrupted: the update waits for the session to end.
+- **Everything is stored locally**, in `%APPDATA%\Raze\config.json`, written
+  atomically as you change it.
 
 ## Download
 
@@ -29,40 +90,6 @@ nothing to click.
 Tab over to your app first, then press `F8`. Raze won't start while its own
 window is in front, and it stops itself if you tab back in. When that
 happens, `F7` continues that same run and `F8` starts a new one.
-
-## What it does
-
-Raze takes a list of your messages and types them into whatever app is open,
-one at a time, pressing Enter after each one.
-
-- On first run Raze installs itself - a Start Menu shortcut and an
-  entry in Settings with a working Uninstall button. Your messages and
-  history stay in your own folder.
-- Put your messages in the box, one per line. Load them from a `.txt` file,
-  save them back, shuffle them, or clear them.
-- Raze keeps several lists of messages at once. Switch between them, add a new
-  one, give it your own name, or delete one from the row under the box -
-  Raze remembers every list.
-- Choose how many seconds pass between messages, and how many times Raze
-  goes through the list. `0` means keep going until you stop it.
-- Turn on random order to send them shuffled instead of top to bottom.
-- Each of the four keys can be changed on the Hotkeys tab.
-- Pause keeps your counters and stops the clock. `F7` picks up where you
-  left off, and `F9` ends the session.
-- Counters never get cut off. When a number is too long for its box, Raze
-  draws it smaller instead of shortening it, so nothing ever ends in `...`
-  however long Raze runs.
-- Raze never types into itself. If it's the window in front it won't start,
-  and it stops if you click back into it.
-- The History tab shows how many messages you sent each day, plus a total
-  for all time, and the date each record was set.
-- The Updates tab lists what each version of Raze changed. Raze updates
-  itself in the background, so this is where you find out what's new.
-- The top bar shows how long Raze has been open. It keeps counting through
-  pauses and stops, and only starts over when you close Raze.
-- If Raze stops without you asking - the list ran out, typing failed, or you
-  clicked back into Raze - you get a Windows notification. Not when you stop
-  it yourself.
 
 ## Screen sizes
 
@@ -117,15 +144,42 @@ excluding them costs nothing and pins the payload.
 
 `python make_shortcut.py` then drops a Start Menu and Desktop shortcut - a
 dev convenience (pywin32, not installed on every machine). The
-shipped exe does the same job itself, from inside `AutoTyper.py`; see the
-Install section of `AGENTS.md`.
+shipped exe does the same job itself, from inside `AutoTyper.py`.
+
+## Tests
 
 ```powershell
 python selftest.py      # or: Raze.exe --selftest
 ```
 
-runs the headless checks (hotkeys, text rendering, history, config) without
-opening a window.
+runs the headless suite - 208 checks over the typing engine, hotkeys, text
+rendering, history, config, install and updater logic - without opening a
+window. Beside it sit four committed harnesses (`pause_and_toast.py`,
+`layout_check.py`, `rpc_check.py`, `capture_window.py`), each printing
+`RESULT: PASS`.
+
+The testing rule is that nothing ever reaches the desktop: keystrokes and
+notifications are replaced with recorders, windows are built at alpha 0, and
+no suite can type, focus or surface anything.
+
+## Project layout
+
+| File | What it is |
+| --- | --- |
+| `AutoTyper.py` | The whole app: UI, typing engine, heartbeat, config, Win32 bindings |
+| `textengine.py` | Renders text to transparent PNGs for the baked interface |
+| `hotkeys.py` | Global hotkey listener on its own thread |
+| `rpc.py` | Discord Rich Presence, ctypes and the standard library only |
+| `selftest.py` | The headless check suite |
+| `AGENTS.md` | Engineering notes: every decision that is not obvious from the code |
+| `assets/` | Emblem, background, the Geist typefaces and `raze.ico` |
+
+## License
+
+MIT - see [LICENSE](LICENSE).
+
+The bundled [Geist](https://github.com/vercel/geist-font) typeface is
+licensed under the SIL Open Font License (`assets/OFL.txt`).
 
 ## Credits
 
