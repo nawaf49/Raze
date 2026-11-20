@@ -2,8 +2,8 @@
 Auto Typer
 A premium random auto typer for Windows.
 
-Visual language: a pure black canvas, hairline borders,
-20-24px radii, pill buttons and tightly tracked display type in Geist.
+A pure black canvas, hairline borders, 20-24px radii, pill buttons and
+tightly tracked display type in Geist.
 
 The backdrop is flat black and the UI is positioned on top with absolute
 coordinates, so nothing overwrites it. The process is DPI aware and

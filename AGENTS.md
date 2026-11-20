@@ -9,8 +9,8 @@ A Windows auto-typer shipped as a single `Raze.exe`. The user keeps a pool of
 messages, presses one global hotkey, and Raze types them into whatever
 application currently has focus, one per interval, with Enter after each.
 
-The visual direction is original — pure
-black, quiet, premium, no chrome. Everything else here is original.
+The visual direction is pure black, quiet, premium, no chrome — all
+original work.
 
 ## The repo
 

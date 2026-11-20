@@ -5,7 +5,7 @@ What it writes: assets/bg.png as flat black artwork, assets/bg_view.png
 cropped from y=96 down, assets/raze_emblem.png, app_icon.png beside this
 script and a multi-size assets/raze.ico.
 
-The background once followed the original recipe - three desaturated
+The background once followed a busier recipe - three desaturated
 lavender/white radial glows (top shaft + two soft bands), a flowing
 halftone mesh band that rides a wave curve, a stack of thin,
 gradient-stroked wave lines, a sparse star field and display type
@@ -28,14 +28,14 @@ WIN_W = 1060
 WIN_H = 860
 NAV_H = 68
 
-# --- design tokens ---------------------------------------------------- #
+# --- design tokens ------------------------------------------------------- #
 BG = (6, 6, 7)
 TEXT = (246, 246, 248)
 MUTED = (161, 161, 170)
 FAINT = (113, 113, 122)
 BORDER = (30, 30, 35)
 
-# raze's overlay gradients (desaturated lavender / silver)
+# leftover overlay gradients (desaturated lavender / silver)
 GLOW_TOP = (170, 178, 230)      # rgba(170,178,230,.20) at 50% -4%
 GLOW_MID = (210, 214, 230)      # rgba(210,214,230,.10) at 60% 62%
 GLOW_LOW = (200, 204, 225)      # rgba(200,204,225,.07) at 30% 74%
