@@ -232,6 +232,12 @@ def run():
             self._raze_hwnd = 0
             self._tab_in_stop = False
             self._worker_error = None
+            # the loop count and the pool position a resumed run carries
+            # on from - the worker reads them at the head, before its try,
+            # so the stub has to carry them or the suite dies loudly
+            self.passes = 0
+            self._w_index = 0
+            self._w_counted = 0
             self.paused = False
             self.typed = []
             self._limit = limit

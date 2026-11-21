@@ -58,7 +58,7 @@ These are not preferences. Breaking one silently ruins the product.
 | `textengine.py` | Renders text to transparent PNGs (baked artwork) |
 | `hotkeys.py` | Global hotkey listener, its own thread, never touches Tk |
 | `selftest.py` | 208 headless checks, run via `Raze.exe --selftest` |
-| `pause_and_toast.py` | 57 checks: pause/resume/toast routing, a tab-in stop continued by the resume key and begun again by the start key, settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
+| `pause_and_toast.py` | 84 checks: pause/resume/toast routing, a tab-in stop continued by the resume key and begun again by the start key, a tab-in timing stage (tab-ins inside the interval leave the countdown running; only a tab-in holding at the deadline stops the run, and the held message plus the loop count carry across the resume), settings changed mid-run, the session card's contents, the loop counter and a held notification against a real window |
 | `layout_check.py` | 40 checks: the window fits the work area, the uptime on the status line, the loop counter's colour, the four keycaps, the hotkeys card and button hover backgrounds, the History tab's two record tiles (a forced record reaching its tile), the Updates tab's rows and its update-done badge (every row body on one x), captures the badge state plus typer/hotkeys/history/updates |
 | `capture_window.py` | PrintWindow helper `layout_check.py` uses; never touches the screen |
 | `rpc.py` | Discord presence: named pipe over ctypes, its own thread |
@@ -310,19 +310,26 @@ handed focus to".
 - `_start()` and `_resume()` both take this guard. Resuming begins typing, so
   it needs exactly the protection starting has.
 - Mid-run, `_typing_worker` re-checks **before every message, never during
-  one**, and the wait between messages checks in every `INTERVAL_POLL_S`
-  (100 ms) slice of it. If Raze is in front it sets `_tab_in_stop` and
-  breaks, so a tab-back cannot dump keystrokes into our own message pool.
-  The wait-side check is what bounds the stop: the interval is the user's —
-  200 s is an ordinary setting — so a check that ran only at message
-  boundaries left Raze sitting in front, looking ignored, for as long as
-  that (probed: 4948 ms, exactly one full interval, at a 5 s setting, and
-  no stop at all within 25 s at 200). One slice is the bound now — 53–105
-  ms from the flip to `typing` going False, through the real heartbeat with
-  `is_foreground` answered from a synthetic flag rather than real focus.
-  A stop or pause outranks focus in that loop, and the loop's own end
-  outranks a tab-in: the pass-count break clears `_tab_in_stop` first,
-  because the loop's rule is what ended that run.
+  one**, and the check sits at the moment the message is due: after the
+  wait, before the pick. The wait itself carries no focus check at all —
+  tabbing into Raze mid-interval leaves the countdown running and the
+  session intact, because that is what the user tabbed in to see: how many
+  seconds remain. Only a tab-in still holding when the deadline arrives
+  stops the run, which is exactly when the next message would go out; the
+  stop lands on the deadline, no earlier and no later (probed end to end
+  through the real heartbeat with `is_foreground` answered from a
+  synthetic flag: a tab-in 400 ms into a 2 s interval stops nothing and
+  loses nothing, the run carries on past its deadline, and a second tab-in
+  held across the deadline stops the run with that message un-sent). The
+  bail does not consume the line: the worker reads `passes`, `_w_index`
+  and `_w_counted` off the instance when it starts and writes them back on
+  every exit, so a resume re-picks the held line and it goes out
+  immediately, the pool position continues instead of walking from the
+  top, and the loop counter carries across instead of counting from one
+  again. `_start` zeroes all three only after `_focus_refused()` passes —
+  beside `_tab_stopped` and a pending `_worker_done`, which a refused
+  start must leave alone: the session waiting for the resume key keeps its
+  flags, its numbers and its reason.
 - **A tab-in stop keeps the session.** The heartbeat freezes
   `stats["elapsed"]` the way pause does, calls `_stop()`, and only then sets
   `_tab_stopped = True` — `_stop()` clears it, so the order matters — before
@@ -1111,10 +1118,11 @@ running on the same machine.
   — the uptime label, `_up_since`, `_tab_stopped` — has to exist on it, and
   out there an `AttributeError` is not swallowed.
 - **Four harnesses are committed** next to it, and all of them are
-  non-intrusive by construction: `send_enter`, `notify_toast` and
-  `is_foreground` are replaced with recorders, the window is built at alpha 0,
-  the presence seam is off, and nothing is ever typed, surfaced or focused.
-  - `pause_and_toast.py` — 57 checks. The session card carries its four
+  non-intrusive by construction: `send_enter` and `notify_toast` are
+  replaced with recorders and `is_foreground` with a flag, the window is
+  built at alpha 0, the presence seam is off, and nothing is ever typed,
+  surfaced or focused.
+  - `pause_and_toast.py` — 84 checks. The session card carries its four
     counters, the `LAST SENT` box and the loop counter (an orphaned block once
     left the card's body unreachable after a `return`, and every other suite
     stayed green because the heartbeat swallows the `AttributeError` that
@@ -1131,7 +1139,13 @@ running on the same machine.
     driven end to end: the toast names the resume key and the session waits,
     the resume key continues it with the counters intact, tabbing in again
     stops it a second time, the start key zeroes the counters for a fresh
-    session, and F9 after all of that stays silent. It reconfigures
+    session, and F9 after all of that stays silent. A tab-in timing stage
+    then drives the real worker against the flip-able `is_foreground`
+    flag: two tab-ins inside a 2 s interval leave the countdown running
+    and the run untouched, the tab-in holding when the deadline arrives
+    stops the run with that message un-sent, and the resume fires the held
+    line at once with the pool position and the loop count carried across.
+    It reconfigures
     `sys.stdout` with
     `errors="replace"`: the `∞` glyph cannot be encoded on a cp1252 console
     and one raised `print` breaks the `after()` chain, stalling the harness.

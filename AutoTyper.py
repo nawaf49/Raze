@@ -3556,6 +3556,11 @@ class AutoTyper:
         self._toast_retry = 0.0
         # which loop the worker is on, read by the session card
         self.passes = 0
+        # where the last worker left the pool: the line it was holding and
+        # how far into the pass it had counted.  Written back on every exit
+        # so a resumed run continues instead of walking from the top again
+        self._w_index = 0
+        self._w_counted = 0
         self._generation = 0
         self.daily = {}
         # the status pulse - its frames are baked once and then swapped,
@@ -6312,14 +6317,12 @@ class AutoTyper:
         # a new session supersedes any announcement still waiting for the
         # screen to free up - it is about to be out of date
         self._pending_toast = None
-        self.passes = 0
         self.messages = self._collect_messages()
         if not self.messages:
             self._confirm("No messages",
                           "Add at least one message before starting.",
                           confirm_text="OK", cancel_text=None)
             return
-        self._tab_in_stop = False
         if self._focus_refused():
             return
         # a fresh start also disposes of a tab-in stop that was waiting for
@@ -6327,6 +6330,20 @@ class AutoTyper:
         # has to be cleared after the guard: refusing the start must leave
         # the resumable session exactly where it was
         self._tab_stopped = False
+        # ...and the same guard owns the flags the previous worker left
+        # behind.  A start that got this far supersedes them - a stale
+        # exit must not stop the session about to begin, and a stale
+        # tab-in must not convert it - while a refused one clears nothing,
+        # or the session still waiting for the resume key loses its reason
+        self._tab_in_stop = False
+        self._worker_done = False
+        # ...and the numbers: a refused start must not wipe the loop count
+        # or the pool position of the session that is still waiting for the
+        # resume key.  Only a start that goes through begins again from
+        # loop one, pool line one
+        self.passes = 0
+        self._w_index = 0
+        self._w_counted = 0
 
         # a fresh start always opens a new session; that is what pause is for
         self.typing = True
@@ -6502,10 +6519,26 @@ class AutoTyper:
         if not order:
             self._worker_done = True
             return
-        passes = 0
-        index = 0
-        counted = 0
-        self.passes = 0
+        # A pause or a tab-in stop ends the worker mid-run and resume
+        # launches a fresh one: it has to pick the session up where the
+        # last one left the pool, not walk from the top and count the
+        # loops again.  _start zeroes all three for a fresh session, so a
+        # first worker reads zeros here.  Clamped against a pool that
+        # shrank while no worker was running
+        passes = self.passes
+        index = self._w_index
+        counted = self._w_counted
+        if index >= len(order):
+            index = 0
+        if counted >= len(order):
+            counted = 0
+        # ...and a Loop lowered while no worker was running - during a
+        # pause or a tab-in stop - can leave the carried passes already
+        # past the limit.  That run ended where it stood: it is not owed
+        # one more walk of the pool
+        if self.loop_count and passes >= self.loop_count:
+            self._worker_done = True
+            return
 
         try:
             while not self.stop_event.is_set():
@@ -6519,6 +6552,20 @@ class AutoTyper:
                     order = live
                     if index >= len(order):
                         index = 0
+
+                # stop before the message goes out, never during it: Raze
+                # being in front means these keystrokes would land in our own
+                # message pool instead of the application the user chose.
+                # This is the only focus check in the run, and it sits at
+                # the moment a message is due - so tabbing into Raze
+                # mid-interval leaves the countdown running and the session
+                # intact, and only a tab-in still holding when the deadline
+                # arrives holds the message back.  The line is not consumed
+                # by the bail: resume re-reads the pool position and the
+                # held message goes out immediately
+                if is_foreground(self._raze_hwnd):
+                    self._tab_in_stop = True
+                    break
 
                 randomise = self._random_pick
                 auto_enter = self._auto_enter
@@ -6536,13 +6583,6 @@ class AutoTyper:
                     index += 1
                     if index >= len(order):
                         index = 0
-
-                # stop before the message goes out, never during it: Raze
-                # being in front means these keystrokes would land in our own
-                # message pool instead of the application the user chose
-                if is_foreground(self._raze_hwnd):
-                    self._tab_in_stop = True
-                    break
 
                 # the counters only advance once the message is away, so a
                 # failed send never burns the number it was about to use
@@ -6563,7 +6603,13 @@ class AutoTyper:
                 # the wait is re-cut from the live interval until it runs
                 # out: a shorter interval lands within INTERVAL_POLL_S of
                 # being typed and a longer one pushes this message's own
-                # deadline out, so what the countdown shows stays the truth
+                # deadline out, so what the countdown shows stays the truth.
+                # It carries no focus check, deliberately: the wait runs
+                # blind to who is in front, so tabbing into Raze
+                # mid-interval only shows the countdown ticking on. The
+                # check at the top of the loop is the stop, and it runs
+                # when this message's own deadline comes due - the moment
+                # the next send would happen, no earlier.
                 anchor = time.monotonic()
                 while not self.stop_event.is_set():
                     deadline = anchor + float(self.msg_interval)
@@ -6575,16 +6621,7 @@ class AutoTyper:
                     # stopped instead of spinning on a timer
                     self.stop_event.wait(min(remaining, INTERVAL_POLL_S))
                     if self.stop_event.is_set():
-                        break           # a stop or a pause outranks focus
-                    # The wait watches for the tab-in as well, not only the
-                    # moment before a message: the interval is the user's -
-                    # minutes at a setting like 200 - and a check that ran
-                    # only at message boundaries left Raze sitting in
-                    # front, looking ignored, for as long as that. One
-                    # slice is the bound now, at any interval.
-                    if is_foreground(self._raze_hwnd):
-                        self._tab_in_stop = True
-                        break
+                        break           # a stop or a pause ends the wait
                 if self.stop_event.is_set():
                     # _pause and _stop clear the deadline, and the slice
                     # that woke on the stop may just have written it back
@@ -6600,19 +6637,17 @@ class AutoTyper:
                     # Tk thread - a plain int assignment is all it takes
                     self.passes = passes
                     if loop_count and passes >= loop_count:
-                        # the loop's own rule ended the run: a tab-in seen
-                        # during the last wait does not outrank that
-                        self._tab_in_stop = False
                         break
-                if self._tab_in_stop:
-                    # the wait itself saw Raze come back - leave without
-                    # picking another line first; the message sent before
-                    # the wait is already counted above
-                    break
         except Exception as e:
             print("Typing error:", e, flush=True)
             self._worker_error = str(e)
         finally:
+            # leave the pool position where this worker stands, so the
+            # next one - a resume after a pause or a tab-in stop - picks
+            # the same session up instead of starting the pool over
+            self.passes = passes
+            self._w_index = index
+            self._w_counted = counted
             # never touch Tk from this thread - the main loop picks the flag up.
             #
             # An exit a pause asked for has to stay silent: _pause has already

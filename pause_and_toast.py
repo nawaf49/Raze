@@ -50,8 +50,10 @@ def main():
     A.notify_toast = lambda *a, **k: False
     # this window does take focus, which is exactly what the real guard
     # refuses; the guard is answered rather than exercised here, since
-    # selftest already covers it
-    A.is_foreground = lambda handle: False
+    # selftest already covers it - and the tab-in timing stage flips this
+    # flag to stand in for the user tabbing into Raze at a chosen moment
+    fg = {"on": False}
+    A.is_foreground = lambda handle: fg["on"]
 
     def fake_type(text):
         typed.append(text)
@@ -439,6 +441,145 @@ def main():
         check("and leaves nothing behind to be resumed",
               app._tab_stopped is False, app._tab_stopped)
 
+        root.after(200, tab_in_timing)
+
+    # ---------------------------------------------------------------- #
+    #  tabbing in mid-interval does not interrupt - only a tab-in still
+    #  holding when the next message is due stops the run
+    # ---------------------------------------------------------------- #
+    # The interval is the user's: two seconds here, an ordinary setting
+    # scaled down from minutes.  A tab-in that lands inside the wait only
+    # has to show the countdown; the stop belongs to the deadline itself,
+    # and the message it holds back goes out the moment the resume key
+    # lands, with the pool position and the loop count carried across.
+    def tab_in_timing():
+        del toasts[:]
+        del typed[:]
+        del stamps[:]
+        fg["on"] = False
+        app.random_box.deselect()
+        app._toggle_random()
+        app.editor.delete("1.0", "end")
+        app.editor.insert("1.0", "alpha\nbeta")
+        app.nf_loop.set(0, call_change=False)
+        app.loop_count = 0
+        app._set_msg_interval(2.0)
+        app._start()
+        # the first message is away within the launch delay; the tab-in
+        # lands once the wait is genuinely under way
+        root.after(400, tab_in_mid_wait)
+
+    def tab_in_mid_wait():
+        fg["on"] = True
+        root.after(500, check_mid_wait)
+
+    def check_mid_wait():
+        check("tabbing in mid-interval leaves the run typing",
+              app.typing is True, app.typing)
+        check("and the countdown to the next message keeps running",
+              app._next_deadline is not None
+              and app._next_deadline > time.monotonic(),
+              str((app._next_deadline, time.monotonic())))
+        check("the session card still says typing",
+              app.status_text._text == "TYPING", app.status_text._text)
+        check("with no announcement owed",
+              toasts == [], str(toasts))
+        check("and no stop waiting to be resumed",
+              app._tab_stopped is False, app._tab_stopped)
+        check("the message in flight was not lost",
+              app.stats["sent"] == 1, app.stats["sent"])
+        # tabbed back out again, well before the deadline
+        fg["on"] = False
+        root.after(1800, check_past_deadline)
+
+    def check_past_deadline():
+        check("the run carried on past its deadline",
+              app.stats["sent"] == 2, app.stats["sent"])
+        check("typing straight through the tab-in",
+              app.typing is True, app.typing)
+        # back in again once the next message is away, still a full
+        # interval before the one after it comes due
+        root.after(1900, tab_in_again_mid)
+
+    def tab_in_again_mid():
+        fg["on"] = True
+        root.after(700, check_countdown)
+
+    def check_countdown():
+        check("a second tab-in mid-interval still does not stop",
+              app.typing is True, app.typing)
+        check("and the countdown is still the truth",
+              app._next_deadline is not None
+              and app._next_deadline > time.monotonic(),
+              str((app._next_deadline, time.monotonic())))
+        check("with every message so far sent",
+              app.stats["sent"] == 3, app.stats["sent"])
+        check("and still nothing announced",
+              toasts == [], str(toasts))
+        root.after(1400, check_deadline_stop)
+
+    def check_deadline_stop():
+        expected = ("Stopped - switch to your app first, then press %s "
+                    "to continue" % app.resume_key.upper())
+        check("the tab-in holding at the deadline stops the run",
+              app.typing is False, app.typing)
+        check("the session waits for the resume key",
+              app._tab_stopped is True, app._tab_stopped)
+        check("that ending is announced with the resume key",
+              toasts == [("Raze", expected)], str(toasts))
+        check("the status explains the stop",
+              app.status_text._text == "TAB OUT", app.status_text._text)
+        check("and so does the session card",
+              app.session_state._text == "Switch to your app first"
+              and app.session_state._color == A.AMBER,
+              str((app.session_state._text, app.session_state._color)))
+        check("the held message never went out",
+              app.stats["sent"] == 3 and len(typed) == 3,
+              str((app.stats["sent"], typed)))
+        check("the loop count survived the stop",
+              app.passes == 1, app.passes)
+        check("the countdown is cleared with the stop",
+              app._next_deadline is None, app._next_deadline)
+        # tabbed back out where the run wants to be, then the key the
+        # announcement named
+        root.after(200, resume_after_tab)
+
+    def resume_after_tab():
+        fg["on"] = False
+        app._resume_requested = True
+        root.after(850, check_continued)
+
+    def check_continued():
+        expected = ("Stopped - switch to your app first, then press %s "
+                    "to continue" % app.resume_key.upper())
+        check("the resume key continues the run",
+              app.typing is True and app._tab_stopped is False,
+              str((app.typing, app._tab_stopped)))
+        check("the held message went out immediately",
+              typed == ["alpha", "beta", "alpha", "beta"], str(typed))
+        check("the loop count carried across the stop",
+              app.passes == 1, app.passes)
+        check("and the resume owes no second announcement",
+              toasts == [("Raze", expected)], str(toasts))
+        root.after(1850, check_pass_carry)
+
+    def check_pass_carry():
+        check("the pass counter carries instead of starting over",
+              app.passes == 2, app.passes)
+        root.after(200, stop_timing)
+
+    def stop_timing():
+        del toasts[:]
+        app._stop_requested = True
+        root.after(400, verify_timing_stop)
+
+    def verify_timing_stop():
+        check("F9 stops the run this way silently too",
+              app.typing is False and toasts == [],
+              str((app.typing, toasts)))
+        check("and leaves nothing behind to be resumed",
+              app._tab_stopped is False, app._tab_stopped)
+        app._set_msg_interval(0.15)
         root.after(200, loop_counter)
 
     # ---------------------------------------------------------------- #
